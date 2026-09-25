@@ -12,14 +12,19 @@
 
 Все модели: https://alphacephei.com/vosk/models
 
-Для summary создайте `.env`:
+Для summary создайте `.env` из шаблона и заполните ключ DeepSeek:
 
+```bash
+cp .env.example .env
 ```
-DEEPSEEK_API_KEY=sk-...
-# DEEPSEEK_MODEL=deepseek-v4-pro   # по умолчанию deepseek-flash
-# OLLAMA_MODEL=qwen3.5:4b          # локальная модель
-# OLLAMA_MAX_CONTEXT=32768         # до скольки токенов считать локально
-```
+
+| Переменная | По умолчанию | Назначение |
+|---|---|---|
+| `DEEPSEEK_API_KEY` | — | ключ DeepSeek API |
+| `DEEPSEEK_MODEL` | `deepseek-flash` | модель DeepSeek (`deepseek-v4-pro` — точнее и дороже) |
+| `OLLAMA_HOST` | `http://localhost:11434` | адрес Ollama |
+| `OLLAMA_MODEL` | `qwen3.5:4b` | локальная модель |
+| `OLLAMA_MAX_CONTEXT` | `32768` | до скольки токенов считать локально в режиме `auto` |
 
 Для локального summary нужен запущенный [Ollama](https://ollama.com) со скачанной моделью (`ollama pull qwen3.5:4b`).
 
@@ -35,8 +40,14 @@ uv run main.py record.mp3                 # всё: распознавание, 
 uv run main.py record.mp3 -p ollama       # summary только локальной моделью
 uv run main.py record.mp3 -p deepseek     # summary только через DeepSeek
 uv run main.py record.mp3 --no-summary    # без summary
+uv run main.py record.mp3 --no-punct      # без пунктуации
+uv run main.py record.mp3 -o out/meeting.txt  # другое место для результатов
 uv run summary.py record.txt              # summary по готовой расшифровке (-p как у main.py)
+uv run summary.py record.txt -p ollama --model llama3.1   # конкретная модель
 ```
+
+Модели ищутся в `models/` рядом с кодом, поэтому запускать можно из любой папки:
+`uv run --project ~/projects/vosk-example main.py ~/Downloads/call.mp3`.
 
 Результат рядом с исходным файлом:
 
@@ -56,3 +67,21 @@ uv run summary.py record.txt              # summary по готовой расш
 
 Правила для модели (тон, что считать решением и задачей, как обращаться с ошибками
 распознавания) — в `prompts/meeting_summary.md`, их можно править без изменения кода.
+
+## Устройство
+
+| Файл | Что внутри |
+|---|---|
+| `main.py` | CLI и пайплайн: ffmpeg → распознавание Vosk → пунктуация → summary |
+| `punctuation.py` | пунктуация и регистр моделью `vosk-recasepunc` |
+| `summary.py` | запросы к DeepSeek и Ollama, выбор провайдера, CLI для summary |
+| `meeting_summary.py` | схема summary и сборка Markdown |
+| `prompts/meeting_summary.md` | правила для модели при составлении summary |
+| `tests/` | тесты схемы, рендера и разбора ответа (без сети и моделей) |
+| `models/` | скачанные модели (не в git) |
+
+## Тесты
+
+```bash
+uv run pytest
+```

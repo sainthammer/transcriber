@@ -15,3 +15,12 @@ dependencies = [
     "transformers>=5.17.0",
     "vosk==0.3.44",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

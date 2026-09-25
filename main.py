@@ -8,7 +8,8 @@ from pathlib import Path
 from tqdm import tqdm
 from vosk import KaldiRecognizer, Model, SetLogLevel
 
-DEFAULT_MODEL = "models/vosk-model-ru-0.42"
+MODELS_DIR = Path(__file__).resolve().parent / "models"
+DEFAULT_MODEL = str(MODELS_DIR / "vosk-model-ru-0.42")
 SAMPLE_RATE = 16000
 CHUNK_BYTES = 8000  # 0.25 s of 16-bit mono audio
 
