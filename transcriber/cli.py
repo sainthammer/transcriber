@@ -8,7 +8,7 @@ from pathlib import Path
 from tqdm import tqdm
 from vosk import KaldiRecognizer, Model, SetLogLevel
 
-MODELS_DIR = Path(__file__).resolve().parent / "models"
+MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
 DEFAULT_MODEL = str(MODELS_DIR / "vosk-model-ru-0.42")
 SAMPLE_RATE = 16000
 CHUNK_BYTES = 8000  # 0.25 s of 16-bit mono audio
@@ -112,7 +112,7 @@ def main():
     texts = [text for _, text in phrases]
     if not args.no_punct and texts:
         print("Расстановка пунктуации...", file=sys.stderr)
-        from punctuation import Punctuator
+        from .punctuation import Punctuator
 
         texts = Punctuator().punctuate(texts)
 
@@ -122,7 +122,7 @@ def main():
     print(f"Текст: {out_path}", file=sys.stderr)
 
     if not args.no_summary and transcript:
-        from summary import save_summary, summarize
+        from .summary import save_summary, summarize
 
         print(f"Генерация summary ({args.provider})...", file=sys.stderr)
         try:
@@ -131,7 +131,7 @@ def main():
                   file=sys.stderr)
         except Exception as e:
             print(f"Summary не получилось: {e}\n"
-                  f"Повторить отдельно: uv run summary.py {out_path} -p {args.provider}",
+                  f"Повторить отдельно: uv run summarize {out_path} -p {args.provider}",
                   file=sys.stderr)
 
     print(f"Всё готово за {fmt_time(time.monotonic() - started)}", file=sys.stderr)

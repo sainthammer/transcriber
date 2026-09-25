@@ -7,22 +7,26 @@
 
 ```bash
 uv run pytest                                  # тесты: без сети и моделей, ~1 с
-uv run main.py <audio> --no-summary            # пайплайн без LLM
-uv run summary.py <transcript.txt> -p ollama   # только summary, локально
+uv run transcribe <audio> --no-summary         # пайплайн без LLM
+uv run summarize <transcript.txt> -p ollama    # только summary, локально
 ```
 
 Полный прогон 35-минутной записи на большой модели занимает несколько минут и грузит ~5 ГБ
-моделей. Для проверки изменений нарезай фрагмент: `ffmpeg -ss 60 -t 30 -i record.mp3 /tmp/clip.mp3`.
+моделей. Для проверки изменений нарезай фрагмент: `ffmpeg -ss 60 -t 30 -i recordings/record.mp3 /tmp/clip.mp3`.
 
 ## Соглашения
 
 - Пользовательский текст (CLI, сообщения, README, промпты, коммиты) — на русском;
   комментарии и docstrings в коде — на английском.
-- Ресурсы проекта (модели, промпты) ищутся от `__file__`, а не от текущей директории.
-- Формат расшифровки `[ЧЧ:ММ:СС] текст` — контракт между `main.fmt_time`,
-  `meeting_summary.transcript_duration` и промптом. Меняешь в одном месте — меняй везде.
-- Структура summary задаётся схемой в `meeting_summary.py`, Markdown собирает код.
-  Правила для модели — в `prompts/meeting_summary.md`. Меняя схему, обнови рендер и тесты.
+- Код — пакет `transcriber/`, команды `transcribe` и `summarize` — в `[project.scripts]`
+  (`pyproject.toml`). Импорты внутри пакета относительные; `punctuation` и `summary`
+  в `cli.py` импортируются лениво (тянут torch/openai).
+- Ресурсы проекта ищутся от `__file__`, а не от текущей директории: модели — в `models/`
+  в корне проекта (родитель пакета), промпты — в `transcriber/prompts/`.
+- Формат расшифровки `[ЧЧ:ММ:СС] текст` — контракт между `transcriber.cli.fmt_time`,
+  `transcriber.meeting_summary.transcript_duration` и промптом. Меняешь в одном месте — меняй везде.
+- Структура summary задаётся схемой в `transcriber/meeting_summary.py`, Markdown собирает код.
+  Правила для модели — в `transcriber/prompts/meeting_summary.md`. Меняя схему, обнови рендер и тесты.
 
 ## Неочевидное (не «исправлять»)
 
@@ -30,7 +34,7 @@ uv run summary.py <transcript.txt> -p ollama   # только summary, лока�
 - **`trust_env=False` в httpx-клиенте Ollama**: в macOS включён системный прокси
   (VPN, `127.0.0.1:1082`), httpx подхватывает его и шлёт через него даже localhost → 503.
   SSH к GitHub тоже не проходит (соединение закрывается) — вероятно, из-за того же VPN.
-- **Загрузка checkpoint пунктуации** (`punctuation.py`): в нём запиклены объекты токенизатора
+- **Загрузка checkpoint пунктуации** (`transcriber/punctuation.py`): в нём запиклены объекты токенизатора
   из transformers 4.x. Грузим `weights_only=True` с заглушками вместо этих классов —
   не заменять на `weights_only=False`. Ключ `position_ids` из state_dict удаляется,
   т.к. в новых transformers это непостоянный буфер.
@@ -46,7 +50,8 @@ uv run summary.py <transcript.txt> -p ollama   # только summary, лока�
 ## Работа с репозиторием
 
 - Не читать и не выводить `.env`.
-- `models/` (~5.5 ГБ) и пользовательские `record.*` не трогать и не коммитить.
+- `models/` (~5.5 ГБ) и `recordings/` (записи, расшифровки и summary пользователя)
+  не трогать и не коммитить.
 - Коммиты — только по просьбе пользователя. В удалённый репозиторий пользователь отправляет
   изменения сам, `git push` не делать.
 - Агент `.claude/agents/project-architect.md` — аудит структуры; по умолчанию только отчёт.

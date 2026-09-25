@@ -13,7 +13,7 @@ from openai import OpenAI
 from pydantic import ValidationError
 from tqdm import tqdm
 
-from meeting_summary import MeetingSummary, render_markdown, system_prompt, transcript_duration
+from .meeting_summary import MeetingSummary, render_markdown, system_prompt, transcript_duration
 
 PROVIDERS = ("auto", "deepseek", "ollama")
 

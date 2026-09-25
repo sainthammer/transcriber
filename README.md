@@ -35,19 +35,21 @@ summary делается локально, иначе — через DeepSeek. �
 
 ## Запуск
 
+Записи удобно класть в `recordings/` (папка не в git), но подойдёт любой путь.
+
 ```bash
-uv run main.py record.mp3                 # всё: распознавание, пунктуация, summary (auto)
-uv run main.py record.mp3 -p ollama       # summary только локальной моделью
-uv run main.py record.mp3 -p deepseek     # summary только через DeepSeek
-uv run main.py record.mp3 --no-summary    # без summary
-uv run main.py record.mp3 --no-punct      # без пунктуации
-uv run main.py record.mp3 -o out/meeting.txt  # другое место для результатов
-uv run summary.py record.txt              # summary по готовой расшифровке (-p как у main.py)
-uv run summary.py record.txt -p ollama --model llama3.1   # конкретная модель
+uv run transcribe recordings/record.mp3                # всё: распознавание, пунктуация, summary (auto)
+uv run transcribe recordings/record.mp3 -p ollama      # summary только локальной моделью
+uv run transcribe recordings/record.mp3 -p deepseek    # summary только через DeepSeek
+uv run transcribe recordings/record.mp3 --no-summary   # без summary
+uv run transcribe recordings/record.mp3 --no-punct     # без пунктуации
+uv run transcribe recordings/record.mp3 -o out/meeting.txt  # другое место для результатов
+uv run summarize recordings/record.txt                 # summary по готовой расшифровке (-p как у transcribe)
+uv run summarize recordings/record.txt -p ollama --model llama3.1   # конкретная модель
 ```
 
-Модели ищутся в `models/` рядом с кодом, поэтому запускать можно из любой папки:
-`uv run --project ~/projects/vosk-example main.py ~/Downloads/call.mp3`.
+Модели ищутся в `models/` в корне проекта, поэтому запускать можно из любой папки:
+`uv run --project ~/projects/vosk-example transcribe ~/Downloads/call.mp3`.
 
 Результат рядом с исходным файлом:
 
@@ -58,7 +60,7 @@ uv run summary.py record.txt -p ollama --model llama3.1   # конкретная
 
 ## Формат summary
 
-Модель возвращает JSON по строгой схеме (`meeting_summary.py`), скрипт проверяет его
+Модель возвращает JSON по строгой схеме (`transcriber/meeting_summary.py`), скрипт проверяет его
 и собирает Markdown по фиксированному шаблону — структура всегда одинаковая:
 кратко, участники, ключевые цифры, решения, задачи (таблица), открытые вопросы,
 ход обсуждения с таймкодами. Для встреч с клиентом добавляется блок «Клиент»
@@ -66,19 +68,23 @@ uv run summary.py record.txt -p ollama --model llama3.1   # конкретная
 для внутренних созвонов — «Статус» и «Блокеры и риски». Тип модель определяет сама.
 
 Правила для модели (тон, что считать решением и задачей, как обращаться с ошибками
-распознавания) — в `prompts/meeting_summary.md`, их можно править без изменения кода.
+распознавания) — в `transcriber/prompts/meeting_summary.md`, их можно править без изменения кода.
 
 ## Устройство
 
 | Файл | Что внутри |
 |---|---|
-| `main.py` | CLI и пайплайн: ffmpeg → распознавание Vosk → пунктуация → summary |
-| `punctuation.py` | пунктуация и регистр моделью `vosk-recasepunc` |
-| `summary.py` | запросы к DeepSeek и Ollama, выбор провайдера, CLI для summary |
-| `meeting_summary.py` | схема summary и сборка Markdown |
-| `prompts/meeting_summary.md` | правила для модели при составлении summary |
+| `transcriber/cli.py` | команда `transcribe`: ffmpeg → распознавание Vosk → пунктуация → summary |
+| `transcriber/punctuation.py` | пунктуация и регистр моделью `vosk-recasepunc` |
+| `transcriber/summary.py` | команда `summarize`: запросы к DeepSeek и Ollama, выбор провайдера |
+| `transcriber/meeting_summary.py` | схема summary и сборка Markdown |
+| `transcriber/prompts/meeting_summary.md` | правила для модели при составлении summary |
 | `tests/` | тесты схемы, рендера и разбора ответа (без сети и моделей) |
 | `models/` | скачанные модели (не в git) |
+| `recordings/` | ваши записи, расшифровки и summary (не в git) |
+
+Команды `transcribe` и `summarize` объявлены в `[project.scripts]` в `pyproject.toml`
+и устанавливаются в `.venv` при `uv sync` (или первом `uv run`).
 
 ## Тесты
 

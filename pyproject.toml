@@ -16,11 +16,23 @@ dependencies = [
     "vosk==0.3.44",
 ]
 
+[project.scripts]
+transcribe = "transcriber.cli:main"
+summarize = "transcriber.summary:main"
+
+[build-system]
+requires = ["uv_build>=0.11.19,<0.12"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+# Flat layout: the package lives in ./transcriber, not ./src/transcriber
+module-name = "transcriber"
+module-root = ""
+
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
 ]
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
 testpaths = ["tests"]

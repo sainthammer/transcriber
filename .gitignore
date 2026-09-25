@@ -15,7 +15,10 @@ wheels/
 # Downloaded models (several GB, see README)
 models/
 
-# Recordings
+# User recordings, transcripts and summaries
+recordings/
+
+# Recordings (anywhere else in the tree)
 *.wav
 *.mp3
 *.m4a

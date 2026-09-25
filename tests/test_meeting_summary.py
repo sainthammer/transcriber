@@ -1,9 +1,9 @@
 import pytest
 from pydantic import ValidationError
 
-from main import fmt_time
-from meeting_summary import MeetingSummary, render_markdown, transcript_duration
-from summary import _parse
+from transcriber.cli import fmt_time
+from transcriber.meeting_summary import MeetingSummary, render_markdown, transcript_duration
+from transcriber.summary import _parse
 
 
 def make_summary(**overrides) -> MeetingSummary:

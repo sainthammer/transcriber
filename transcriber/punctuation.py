@@ -6,7 +6,7 @@ from pathlib import Path
 
 import torch
 
-DEFAULT_PUNCT_MODEL = str(Path(__file__).resolve().parent / "models" / "vosk-recasepunc-ru-0.22")
+DEFAULT_PUNCT_MODEL = str(Path(__file__).resolve().parent.parent / "models" / "vosk-recasepunc-ru-0.22")
 
 # recasepunc puts a space before "?" and "!" (French style), so map labels ourselves.
 PUNCT_SYMBOLS = {"O": "", "COMMA": ",", "PERIOD": ".", "QUESTION": "?", "EXCLAMATION": "!"}
