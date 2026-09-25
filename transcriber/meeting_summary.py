@@ -8,7 +8,9 @@ from pydantic import BaseModel, Field, model_validator
 
 PROMPT_PATH = Path(__file__).parent / "prompts" / "meeting_summary.md"
 
-Timestamp = Annotated[str, Field(pattern=r"^\d{2}:\d{2}:\d{2}$",
+# [0-9] rather than \d: Ollama's schema-to-grammar converter doesn't support \d and
+# silently drops the whole pattern, leaving timestamps unconstrained during generation.
+Timestamp = Annotated[str, Field(pattern=r"^[0-9]{2}:[0-9]{2}:[0-9]{2}$",
                                  description="Таймкод ЧЧ:ММ:СС из расшифровки")]
 Items = Annotated[list[str], Field(description="Пункты; пустой список, если нечего сказать")]
 

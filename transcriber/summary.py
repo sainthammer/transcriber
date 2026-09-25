@@ -31,8 +31,16 @@ OLLAMA_DEFAULT_MAX_CONTEXT = 32768
 # Qwen tokenizer gives ~3.6 chars/token on Russian; 3 overestimates on purpose.
 CHARS_PER_TOKEN = 3
 
+# Small models occasionally loop until they hit num_predict. The repeat penalty over the
+# last ~paragraph breaks phrase-level loops; 1.1 is mild enough not to garble Russian
+# words (1.5 already does), and structural JSON tokens are dictated by the schema grammar.
+# Low temperature on purpose: at Qwen's recommended 0.7 the 4B model invented product
+# names from misrecognized words, at 0.3 it didn't.
+OLLAMA_SAMPLING = {"temperature": 0.3, "top_p": 0.8, "top_k": 20,
+                   "repeat_penalty": 1.1, "repeat_last_n": 256}
+
 MAX_OUTPUT_TOKENS = 8192
-TEMPERATURE = 0.3
+DEEPSEEK_TEMPERATURE = 0.3
 MAX_ATTEMPTS = 2
 
 
@@ -61,7 +69,7 @@ def _chat_deepseek(messages: list[dict], model: str | None) -> str:
         messages=messages,
         response_format={"type": "json_object"},
         max_tokens=DEEPSEEK_MAX_TOKENS,
-        temperature=TEMPERATURE,
+        temperature=DEEPSEEK_TEMPERATURE,
     )
     choice = response.choices[0]
     if choice.finish_reason == "length":
@@ -108,8 +116,7 @@ def _chat_ollama(messages: list[dict], model: str | None) -> str:
         "think": False,
         # Constrains generation to the schema, so the output is always parseable JSON.
         "format": MeetingSummary.model_json_schema(),
-        "options": {"num_ctx": num_ctx, "num_predict": MAX_OUTPUT_TOKENS,
-                    "temperature": TEMPERATURE},
+        "options": {"num_ctx": num_ctx, "num_predict": MAX_OUTPUT_TOKENS, **OLLAMA_SAMPLING},
     }
 
     parts = []
