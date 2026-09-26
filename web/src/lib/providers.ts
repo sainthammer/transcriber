@@ -1,4 +1,4 @@
-import type { Config, Provider, ProviderInfo, SummaryTypeChoice } from '../api/types'
+import type { Config, LlmProvider, Provider, ProviderInfo, SummaryTypeChoice } from '../api/types'
 
 /** Conversations about people: suggest keeping them on the local model. */
 export const PRIVATE_TYPES: SummaryTypeChoice[] = ['interview', 'one_on_one']
@@ -51,3 +51,7 @@ export function joinOr(items: string[]): string {
   if (items.length <= 1) return items.join('')
   return `${items.slice(0, -1).join(', ')} или ${items[items.length - 1]}`
 }
+
+/** How a model that made a summary is named in the interface. */
+export const providerName = (p: LlmProvider | 'unknown' | null | undefined) =>
+  p === 'deepseek' ? 'DeepSeek' : p === 'ollama' ? 'Локальная модель' : null

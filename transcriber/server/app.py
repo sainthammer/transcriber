@@ -16,12 +16,12 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi import Path as PathParam
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 
 from ..docx_export import markdown_to_docx
 from ..log import SERVER_DEFAULT, setup_logging
-from ..summary import PROVIDERS
+from ..summary import PROVIDERS, normalize_instructions
 from ..summary_types import strip_empty_sections, transcript_duration
 from . import admin, api_docs, auth
 from .api_docs import JOB_NOT_FOUND, UNAUTHORIZED, error
@@ -54,11 +54,25 @@ DOCX_NAMES = {"summary.docx", "digest.docx"}
 
 PROVIDER_HELP = "`auto`, `deepseek` или `ollama`; `auto` выбирает по размеру расшифровки"
 SUMMARY_TYPE_HELP = "id типа из `GET /api/config` или `auto` — модель определит сама"
+# Room for a paragraph of wishes; the prompt (and Ollama's num_ctx) grows with them.
+MAX_INSTRUCTIONS = 2000
 
 
 class SummaryRequest(BaseModel):
     provider: str = Field("auto", description=PROVIDER_HELP)
     summary_type: str = Field("auto", description=SUMMARY_TYPE_HELP)
+    instructions: str | None = Field(
+        None, description="Пожелания к новой версии, например «подробнее про задачи». "
+                          f"Пробелы по краям обрезаются, пустая строка — как null; не длиннее "
+                          f"{MAX_INSTRUCTIONS} символов. Правила типа и схема важнее пожеланий.")
+
+    @field_validator("instructions")
+    @classmethod
+    def _instructions(cls, value: str | None) -> str | None:
+        value = normalize_instructions(value)
+        if value and len(value) > MAX_INSTRUCTIONS:
+            raise ValueError(f"Пожелания длиннее {MAX_INSTRUCTIONS} символов")
+        return value
 
 
 class JobCreated(BaseModel):
@@ -194,19 +208,42 @@ def create_app(jobs_dir: Path = DEFAULT_JOBS_DIR, pipeline=None, start_worker: b
         manager.delete(job.id)
 
     @app.post("/api/jobs/{job_id}/summary", status_code=202, tags=["Записи"],
-              summary="Повторить summary",
-              description="Заново делает summary по готовой расшифровке, в том числе другим "
-                          "провайдером или типом.", response_model=JobCreated,
+              summary="Новая версия summary",
+              description="Заново делает summary по готовой расшифровке — другим провайдером, "
+                          "типом или с пожеланиями пользователя. Текущее summary остаётся до "
+                          "готовности новой версии, а при ошибке — и после (с `summary_error`). "
+                          "Каждое готовое summary сохраняется в `summary_versions`.",
+              response_model=JobCreated,
               responses={**UNAUTHORIZED, **JOB_NOT_FOUND,
                          409: error("Запись ещё обрабатывается или расшифровки нет"),
-                         422: error("Неизвестный провайдер или тип summary")})
+                         422: error("Неизвестный провайдер или тип summary, слишком длинные "
+                                    "пожелания")})
     def retry_summary(body: SummaryRequest, job: Job = Depends(get_job)):
         check_options(body.provider, body.summary_type)
         try:
-            manager.retry_summary(job, body.provider, body.summary_type)
+            manager.retry_summary(job, body.provider, body.summary_type, body.instructions)
         except ValueError as e:
             raise HTTPException(409, str(e)) from None
         return {"id": job.id}
+
+    @app.post("/api/jobs/{job_id}/summary/versions/{version_id}/restore", tags=["Записи"],
+              summary="Вернуть версию summary",
+              description="Делает сохранённую версию текущей: summary, провайдер и файлы для "
+                          "скачивания. Ответ — запись целиком, как `GET /api/jobs/{job_id}`.",
+              responses={**UNAUTHORIZED,
+                         404: error("Записи или версии нет"),
+                         409: error("Запись ещё обрабатывается или тип summary версии "
+                                    "удалён")})
+    def restore_summary_version(version_id: int = PathParam(description="id из "
+                                                             "`summary_versions`"),
+                                job: Job = Depends(get_job)):
+        try:
+            manager.restore_version(job, version_id)
+        except LookupError:
+            raise HTTPException(404, "Версия summary не найдена") from None
+        except ValueError as e:
+            raise HTTPException(409, str(e)) from None
+        return manager.detail(job)
 
     @app.get("/api/jobs/{job_id}/audio", tags=["Записи"], summary="Аудио для прослушивания",
              responses={200: {"description": "Аудиофайл", "content": {"audio/*": {}}},
@@ -302,26 +339,36 @@ def create_app(jobs_dir: Path = DEFAULT_JOBS_DIR, pipeline=None, start_worker: b
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     @app.get("/api/events", tags=["Прогресс"], summary="Изменения списка записей (SSE)",
-             description="`snapshot` со всеми записями, затем `job_updated` и `job_deleted`. "
-                         "Поток не заканчивается сам.",
+             description="`snapshot` со всеми записями, затем `job_updated` и `job_deleted`, "
+                         "а `summary_changed` (`{id, summary_version_id}`) — когда у записи "
+                         "сменилась текущая версия summary (новая или возвращённая): открытой "
+                         "записи пора перечитать `GET /api/jobs/{job_id}`. Поток не "
+                         "заканчивается сам.",
              responses={**_stream_response("Поток событий"), **UNAUTHORIZED})
     async def all_events(request: Request, user: CurrentUser = Depends(current_user)):
         def snapshot() -> dict:
             return {j.id: manager.list_item(j) for j in manager.for_user(user.id)}
 
+        def versions() -> dict:
+            return {j.id: j.summary_version_id for j in manager.for_user(user.id)}
+
         async def stream():
-            known = snapshot()
+            known, known_versions = snapshot(), versions()
             yield _sse("snapshot", {"jobs": list(known.values())})
             beat = time.monotonic()
             while not stopping.is_set() and not await request.is_disconnected():
                 await asyncio.sleep(0.5)
-                current = snapshot()
+                current, current_versions = snapshot(), versions()
                 for job_id in known.keys() - current.keys():
                     yield _sse("job_deleted", {"id": job_id})
                 for job_id, item in current.items():
                     if known.get(job_id) != item:
                         yield _sse("job_updated", item)
-                known = current
+                for job_id, version_id in current_versions.items():
+                    if job_id in known_versions and known_versions[job_id] != version_id:
+                        yield _sse("summary_changed", {"id": job_id,
+                                                       "summary_version_id": version_id})
+                known, known_versions = current, current_versions
                 if time.monotonic() - beat > 15:
                     beat = time.monotonic()
                     yield ": ping\n\n"

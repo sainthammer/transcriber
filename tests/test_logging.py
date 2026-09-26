@@ -154,3 +154,28 @@ def test_cli_default_is_silent(monkeypatch, clean_logger):
     assert not clean_logger.isEnabledFor(logging.ERROR)
     log.setup_logging(log.SERVER_DEFAULT)
     assert clean_logger.isEnabledFor(logging.INFO)
+
+
+def test_instructions_sent_after_transcript_but_not_logged(monkeypatch, logs):
+    sent = []
+
+    def fake_chat(messages, model, schema, config):
+        sent.append(messages)
+        return (json.dumps(make_data("meeting"), ensure_ascii=False),
+                summary.Usage("ollama", "qwen3.5:4b", "", 10, 5, "stop"))
+
+    monkeypatch.setattr(summary, "_chat_ollama", fake_chat)
+    wishes = f"  {SECRET}: подробнее про задачи  "
+    summary.summarize("[00:00:00] Привет", "ollama", summary_type="meeting",
+                      config=summary.LLMConfig(), instructions=wishes)
+
+    system, user = sent[0]
+    assert SECRET not in system["content"]  # rules and schema stay untouched
+    assert user["content"].startswith("Расшифровка:\n\n[00:00:00] Привет")
+    assert f"{SECRET}: подробнее про задачи\n\n" in user["content"]
+    assert "правила и схема важнее" in user["content"]
+    plain = summary._messages("[00:00:00] Привет", "meeting")
+    assert summary._estimate_tokens(sent[0]) > summary._estimate_tokens(plain)  # num_ctx
+    assert any(r.getMessage() == f"summary: user instructions_chars={len(wishes.strip())}"
+               for r in logs.records)
+    assert_no_secret(logs)

@@ -29,7 +29,7 @@ interface Props {
 }
 
 export function JobScreen({ id, listItem, config, layout, onOpenSidebar, onPick }: Props) {
-  const { job, missing, reload } = useJob(id)
+  const { job, missing, reload, replace } = useJob(id)
   const [store] = useState(() => new PlayerStore())
   const [startAt] = useState(initialTime)
   const [titleVisible, setTitleVisible] = useState(true)
@@ -138,6 +138,7 @@ export function JobScreen({ id, listItem, config, layout, onOpenSidebar, onPick 
       articleRef={articleRef}
       onTitleVisible={setTitleVisible}
       onRequested={reload}
+      onRestored={replace}
       onDelete={del}
       onPick={onPick}
     />

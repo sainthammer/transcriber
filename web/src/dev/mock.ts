@@ -1,5 +1,8 @@
 // Dev-only fake backend for UI states that are hard to reproduce with the real one.
 // Enabled by ?mock=<scenario> (remembered for the tab): states | empty | offline.
+// Summary versions: mock-interview has three, mock-regenerating is making a new one,
+// mock-regen-error keeps the old one after a failure. A request whose wishes contain
+// «ошибка» fails the same way.
 // Imported only under import.meta.env.DEV, so none of this reaches the production build.
 
 import { urls } from '../api/client'
@@ -10,6 +13,8 @@ import type {
   Phrase,
   StageInfo,
   Summary,
+  SummaryVersion,
+  User,
 } from '../api/types'
 import interviewSummary from './fixtures/interview.summary.json'
 import oneOnOneSummary from './fixtures/one_on_one.summary.json'
@@ -72,12 +77,53 @@ function job(
     audio_ready: true,
     transcript: [],
     summary: null,
+    summary_versions: [],
     ...partial,
   }
 }
 
 const interview = parseTranscript(interviewText)
 const oneOnOne = parseTranscript(oneOnOneText)
+
+// --- Summary versions: content by version id, so switching visibly changes the text ---
+
+const versionContent = new Map<number, Summary>()
+let nextVersionId = 100
+
+function variant(base: Summary, n: number, provider: 'deepseek' | 'ollama'): Summary {
+  return n === 1
+    ? base
+    : {
+        ...base,
+        tldr:
+          provider === 'ollama'
+            ? `${base.tldr} (Черновик локальной модели — детали стоит сверить с расшифровкой.)`
+            : `Версия ${n}. ${base.tldr}`,
+      }
+}
+
+/** Versions newest first, `minutesAfter` the job was created; the newest is current by default. */
+function versions(
+  created: string,
+  base: Summary,
+  list: { minutesAfter: number; provider: 'deepseek' | 'ollama'; instructions?: string }[],
+  currentIndex = 0,
+): { summary: Summary; summary_versions: SummaryVersion[] } {
+  const total = list.length
+  const out = list.map((v, i) => {
+    const id = nextVersionId++
+    versionContent.set(id, variant(base, total - i, v.provider))
+    return {
+      id,
+      created_at: new Date(Date.parse(created) + v.minutesAfter * 60_000).toISOString(),
+      provider: v.provider,
+      summary_type: base.meeting_type,
+      instructions: v.instructions ?? null,
+      current: i === currentIndex,
+    }
+  })
+  return { summary: versionContent.get(out[currentIndex].id)!, summary_versions: out }
+}
 
 function initialJobs(): JobDetail[] {
   return [
@@ -127,7 +173,57 @@ function initialJobs(): JobDetail[] {
         total_sec: 260,
         phrases: interview.length,
       },
-      summary: interviewSummary as Summary,
+      ...versions(iso(0, 10, 30), interviewSummary as Summary, [
+        {
+          minutesAfter: 25,
+          provider: 'deepseek',
+          instructions:
+            'Подробнее про опыт с Kafka и ожидания по зарплате; кандидата зовут Ирина, не Марина.',
+        },
+        { minutesAfter: 12, provider: 'ollama' },
+        { minutesAfter: 6, provider: 'deepseek' },
+      ]),
+    }),
+    job({
+      id: 'mock-regenerating',
+      filename: 'Собеседование — бэкенд.m4a',
+      created_at: iso(0, 9, 10),
+      duration_sec: 260,
+      status: 'running',
+      stage: 'summarizing',
+      progress_pct: 95,
+      provider_used: 'deepseek',
+      options: { provider: 'deepseek', summary: true, summary_type: 'interview' },
+      stages: {
+        transcribing: stage('done', 30),
+        summarizing: stage('running', 1),
+      },
+      transcript: interview,
+      progress: { processed_sec: 260, total_sec: 260, phrases: interview.length },
+      ...versions(iso(0, 9, 10), interviewSummary as Summary, [
+        { minutesAfter: 18, provider: 'ollama' },
+        { minutesAfter: 6, provider: 'deepseek' },
+      ]),
+    }),
+    job({
+      id: 'mock-regen-error',
+      filename: 'Собеседование — фронтенд.m4a',
+      created_at: iso(1, 15, 20),
+      duration_sec: 260,
+      provider_used: 'ollama',
+      options: { provider: 'ollama', summary: true, summary_type: 'interview' },
+      stages: {
+        transcribing: stage('done', 90),
+        summarizing: stage('error', 2),
+      },
+      summary_error:
+        'Модель вернула ответ не по схеме — попробуйте ещё раз или выберите DeepSeek',
+      transcript: interview,
+      progress: { processed_sec: 260, total_sec: 260, phrases: interview.length },
+      ...versions(iso(1, 15, 20), interviewSummary as Summary, [
+        { minutesAfter: 40, provider: 'deepseek', instructions: 'Короче, только решения и задачи' },
+        { minutesAfter: 7, provider: 'deepseek' },
+      ]),
     }),
     job({
       id: 'mock-one-on-one',
@@ -261,6 +357,13 @@ configs.none = {
     },
     ollama: { available: false, reason: 'not_running', model: 'qwen3.5:4b' },
   },
+}
+
+const mockUser: User = {
+  id: 1,
+  email: 'anna@example.com',
+  name: 'Анна',
+  role: 'admin',
 }
 
 // --- State and change notifications ---
@@ -487,6 +590,8 @@ export function installMocks() {
     const method = init?.method ?? 'GET'
     await new Promise((r) => setTimeout(r, 120))
     if (url === '/api/config') return json(config)
+    if (url === '/api/auth/me') return json(mockUser)
+    if (url === '/api/auth/logout') return json(null, 204)
     const m = url.match(/^\/api\/jobs\/([^/]+)(\/.*)?$/)
     const j = m && jobs.find((x) => x.id === decodeURIComponent(m[1]))
     if (!m || !j) return json({ detail: 'Запись не найдена' }, 404)
@@ -498,12 +603,30 @@ export function installMocks() {
     }
     if (!rest) return json(j)
     if (rest === '/summary' && method === 'POST') {
-      const body = JSON.parse(String(init?.body ?? '{}'))
+      const body = JSON.parse(String(init?.body ?? '{}')) as {
+        provider: 'auto' | 'deepseek' | 'ollama'
+        summary_type: string
+        instructions?: string | null
+      }
+      const instructions = body.instructions?.trim() || null
+      if (instructions && instructions.length > 2000)
+        return json(
+          {
+            detail: [
+              {
+                loc: ['body', 'instructions'],
+                msg: 'Не длиннее 2000 символов',
+              },
+            ],
+          },
+          422
+        )
+      const used = body.provider === 'deepseek' ? 'deepseek' : 'ollama'
       update(j.id, {
         status: 'running',
         stage: 'summarizing',
         summary_error: null,
-        provider_used: body.provider === 'deepseek' ? 'deepseek' : 'ollama',
+        provider_used: used,
         options: {
           ...j.options,
           summary: true,
@@ -515,15 +638,52 @@ export function installMocks() {
       setTimeout(() => {
         const c = jobs.find((x) => x.id === j.id)
         if (!c) return
-        const summary = (
-          j.transcript === interview ? interviewSummary : oneOnOneSummary
-        ) as Summary
-        update(j.id, {
-          status: 'done',
-          stage: null,
-          summary,
-          stages: { ...c.stages, summarizing: stage('done', 0) },
-        })
+        if (instructions?.toLowerCase().includes('ошибка')) {
+          update(j.id, {
+            status: 'done',
+            stage: null,
+            summary_error:
+              'DeepSeek не ответил вовремя — попробуйте ещё раз чуть позже',
+            stages: { ...c.stages, summarizing: stage('error', 0) },
+          })
+        } else {
+          const base = (
+            j.transcript === interview ? interviewSummary : oneOnOneSummary
+          ) as Summary
+          const id = nextVersionId++
+          const n = c.summary_versions.length + 1
+          const summary: Summary =
+            n === 1
+              ? base
+              : {
+                  ...base,
+                  tldr: instructions
+                    ? `Версия ${n} с учётом пожелания «${instructions}». ${base.tldr}`
+                    : `Версия ${n}. ${base.tldr}`,
+                }
+          versionContent.set(id, summary)
+          update(j.id, {
+            status: 'done',
+            stage: null,
+            summary,
+            title: summary.title,
+            summary_versions: [
+              {
+                id,
+                created_at: new Date().toISOString(),
+                provider: used,
+                summary_type:
+                  body.summary_type === 'auto'
+                    ? base.meeting_type
+                    : body.summary_type,
+                instructions,
+                current: true,
+              },
+              ...c.summary_versions.map((v) => ({ ...v, current: false })),
+            ],
+            stages: { ...c.stages, summarizing: stage('done', 0) },
+          })
+        }
         emitJob(
           j.id,
           'done',
@@ -531,6 +691,25 @@ export function installMocks() {
         )
       }, 5000)
       return json({ id: j.id }, 202)
+    }
+    const restore = rest.match(/^\/summary\/versions\/(\d+)\/restore$/)
+    if (restore && method === 'POST') {
+      if (j.status === 'queued' || j.status === 'running')
+        return json({ detail: 'Запись сейчас обрабатывается' }, 409)
+      const id = Number(restore[1])
+      const version = j.summary_versions.find((v) => v.id === id)
+      const summary = versionContent.get(id)
+      if (!version || !summary)
+        return json({ detail: 'Версия не найдена' }, 404)
+      update(j.id, {
+        summary,
+        provider_used: version.provider === 'unknown' ? null : version.provider,
+        summary_versions: j.summary_versions.map((v) => ({
+          ...v,
+          current: v.id === id,
+        })),
+      })
+      return json(jobs.find((x) => x.id === j.id))
     }
     if (rest === '/download/summary.md' && j.summary) {
       return new Response(

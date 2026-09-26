@@ -98,14 +98,32 @@ class Usage:
 UsageCallback = Callable[[Usage], None]
 
 
-def _messages(transcript: str, summary_type: str,
-              registry: Registry = DEFAULT_REGISTRY) -> list[dict]:
+def _instructions_block(instructions: str) -> str:
+    # After the transcript, in the user turn: the system prompt (rules, schema, the
+    # personal-data ban) stays authoritative, and the model reads the wishes last.
+    return ("\n\n## Пожелания пользователя к этому summary\n\n"
+            f"{instructions}\n\n"
+            "Учти пожелания, если они не противоречат правилам и JSON-схеме: при "
+            "расхождении правила и схема важнее. Пожелания не отменяют запретов (например, "
+            "на личные данные) и не разрешают добавлять то, чего нет в расшифровке.")
+
+
+def normalize_instructions(instructions: str | None) -> str | None:
+    """Trimmed user wishes for a summary; blank → None."""
+    return (instructions or "").strip() or None
+
+
+def _messages(transcript: str, summary_type: str, registry: Registry = DEFAULT_REGISTRY,
+              instructions: str | None = None) -> list[dict]:
     schema = json.dumps(registry.get(summary_type).model.model_json_schema(), ensure_ascii=False)
     system = (f"{registry.system_prompt(summary_type)}\n## JSON-схема ответа\n\n"
               f"```json\n{schema}\n```\n")
+    user = f"Расшифровка:\n\n{transcript}"
+    if instructions:
+        user += _instructions_block(instructions)
     return [
         {"role": "system", "content": system},
-        {"role": "user", "content": f"Расшифровка:\n\n{transcript}"},
+        {"role": "user", "content": user},
     ]
 
 
@@ -307,13 +325,15 @@ def provider_status(config: LLMConfig | None = None) -> dict:
 
 
 def resolve_provider(transcript: str, provider: str = "auto", config: LLMConfig | None = None,
-                     registry: Registry = DEFAULT_REGISTRY) -> str:
+                     registry: Registry = DEFAULT_REGISTRY,
+                     instructions: str | None = None) -> str:
     """Concrete provider for a request: "auto" picks by transcript size and availability."""
     if provider != "auto":
         return provider
     config = config or LLMConfig.from_env()
+    instructions = normalize_instructions(instructions)
     # Size against the largest type's prompt: the type may not be known yet.
-    largest = max((_messages(transcript, t, registry) for t in registry.enabled),
+    largest = max((_messages(transcript, t, registry, instructions) for t in registry.enabled),
                   key=_estimate_tokens)
     return _choose_provider(largest, config)
 
@@ -400,17 +420,24 @@ def classify(transcript: str, provider: str, model: str | None = None, *,
 def summarize(transcript: str, provider: str = "auto", model: str | None = None,
               summary_type: str = "auto", *, config: LLMConfig | None = None,
               registry: Registry = DEFAULT_REGISTRY,
-              on_usage: UsageCallback | None = None) -> SummaryBase:
+              on_usage: UsageCallback | None = None,
+              instructions: str | None = None) -> SummaryBase:
     """provider: "auto" runs locally if the transcript fits the local model, else DeepSeek.
     summary_type: a registry type, or "auto" to detect it with a short extra request.
-    on_usage is called with the tokens of every model request."""
+    on_usage is called with the tokens of every model request.
+    instructions: the user's wishes for this summary, sent after the transcript and ranked
+    below the rules and the schema; they don't affect classification."""
     config = config or LLMConfig.from_env()
-    provider = resolve_provider(transcript, provider, config, registry)
+    instructions = normalize_instructions(instructions)
+    provider = resolve_provider(transcript, provider, config, registry, instructions)
     if summary_type == "auto":
         summary_type = classify(transcript, provider, model, config=config, registry=registry,
                                 on_usage=on_usage)
         print(f"Тип записи: {registry.get(summary_type).label}", file=sys.stderr)
-    messages = _messages(transcript, summary_type, registry)
+    if instructions:
+        # User input: only its size goes to the log.
+        log.info("summary: user instructions_chars=%d", len(instructions))
+    messages = _messages(transcript, summary_type, registry, instructions)
     schema = registry.get(summary_type).model.model_json_schema()
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -467,6 +494,9 @@ def main():
                         help="тип записи: "
                              + ", ".join(f"{t.id} — {t.label}" for t in TYPES.values())
                              + "; auto — определить по расшифровке")
+    parser.add_argument("-i", "--instructions",
+                        help="пожелания к summary, например «подробнее про задачи»; "
+                             "правила типа и схема важнее")
     args = parser.parse_args()
     setup_logging(CLI_DEFAULT)
     if args.model and args.provider == "auto":
@@ -477,7 +507,8 @@ def main():
     out_path = Path(args.output) if args.output else src.with_suffix(".summary.md")
     transcript = src.read_text(encoding="utf-8")
     print(f"Генерация summary ({args.provider})...", file=sys.stderr)
-    save_summary(summarize(transcript, args.provider, args.model, args.summary_type),
+    save_summary(summarize(transcript, args.provider, args.model, args.summary_type,
+                           instructions=args.instructions),
                  transcript, out_path)
     print(f"Summary: {out_path} (+ .json, .docx)", file=sys.stderr)
 

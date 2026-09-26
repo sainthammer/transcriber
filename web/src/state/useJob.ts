@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api, ApiError, urls } from '../api/client'
 import type { JobDetail, Phrase } from '../api/types'
 import { withViewTransition } from '../lib/hooks'
+import { SUMMARY_CHANGED } from './useJobs'
 
 export const isFinal = (status: JobDetail['status']) => status === 'done' || status === 'error'
 
@@ -19,6 +20,11 @@ export function useJob(id: string) {
   const [state, setState] = useState<State>({ id, job: null, missing: false })
   const [epoch, setEpoch] = useState(0)
   const reload = useCallback(() => setEpoch((n) => n + 1), [])
+  /** A fresh snapshot from another request (e.g. restoring a summary version). */
+  const replace = useCallback(
+    (job: JobDetail) => setState((s) => (s.id === job.id ? { ...s, job, missing: false } : s)),
+    [],
+  )
 
   // Reset synchronously when switching recordings so stale data never flashes.
   if (state.id !== id) setState({ id, job: null, missing: false })
@@ -106,14 +112,21 @@ export function useJob(id: string) {
       })
     }
 
+    // A version was made current elsewhere (another tab, or a regeneration seen via /api/events).
+    const onSummaryChanged = (e: Event) => {
+      if ((e as CustomEvent<string>).detail === id) void refresh()
+    }
+    window.addEventListener(SUMMARY_CHANGED, onSummaryChanged)
+
     connect()
     return () => {
       disposed = true
       source?.close()
       clearTimeout(timer)
+      window.removeEventListener(SUMMARY_CHANGED, onSummaryChanged)
     }
   }, [id, epoch])
 
   const current = state.id === id ? state : { job: null, missing: false }
-  return { job: current.job, missing: current.missing, reload }
+  return { job: current.job, missing: current.missing, reload, replace }
 }

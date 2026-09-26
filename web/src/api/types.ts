@@ -86,8 +86,25 @@ export interface JobDetail extends JobListItem {
   provider_used: LlmProvider | null
   audio_ready: boolean
   transcript: Phrase[]
+  /** The current version; kept while a new one is being made and after a failed attempt. */
   summary: Summary | null
+  /** Earlier and current summaries, newest first, without their content. */
+  summary_versions: SummaryVersion[]
 }
+
+export interface SummaryVersion {
+  id: number
+  created_at: string
+  /** 'unknown' for versions backfilled from recordings imported without provider_used. */
+  provider: LlmProvider | 'unknown'
+  summary_type: SummaryTypeId
+  /** What the user asked to change for this version. */
+  instructions: string | null
+  current: boolean
+}
+
+/** Server limit for `instructions` in a summary request (longer is a 422). */
+export const INSTRUCTIONS_MAX = 2000
 
 // --- Summary ---
 

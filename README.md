@@ -50,6 +50,7 @@ uv run transcribe recordings/record.mp3 -o out/meeting.txt  # другое ме�
 uv run summarize recordings/record.txt                 # summary по готовой расшифровке (-p как у transcribe)
 uv run summarize recordings/record.txt -p ollama --model llama3.1   # конкретная модель
 uv run summarize recordings/record.txt -t interview    # тип записи задан явно (см. «Типы summary»)
+uv run summarize recordings/record.txt -i "Иван — заказчик"  # пожелания к summary (правила типа важнее)
 ```
 
 Модели ищутся в `models/` в корне проекта, поэтому запускать можно из любой папки:
@@ -81,6 +82,8 @@ LOG_LEVEL=DEBUG uv run transcriber-web --no-browser               # сервер
 
 Загрузка записей, прогресс обработки, summary с переходом по таймкодам к месту в записи,
 расшифровка с поиском и плеер, скачивание summary в Word, Markdown и JSON.
+Summary можно сделать заново — другим провайдером, типом или с пожеланиями
+(«подробнее про задачи»); последние 20 версий сохраняются, к любой можно вернуться.
 
 Интерфейс работает с учётными записями: у каждого пользователя свой список записей,
 а администратор управляет пользователями, ключами API и моделями, типами встреч и их

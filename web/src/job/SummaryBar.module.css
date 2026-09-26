@@ -1,0 +1,258 @@
+/* One line between the title block and the summary; the same height in every state. */
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: var(--tap);
+  margin-top: var(--space-4);
+  margin-bottom: calc(var(--space-2) * -1);
+}
+
+/* The plain button's padding stays inside the column: text lines up with the summary edge. */
+.action {
+  margin-right: calc(var(--space-3) * -1);
+}
+
+/* --- Version switch --- */
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--tap);
+  min-width: 0;
+  margin-left: calc(var(--space-2) * -1);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-s);
+  font-size: var(--text-15);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+  transition:
+    background var(--dur-1) var(--ease),
+    transform var(--dur-1) var(--ease);
+}
+
+.trigger:hover,
+.trigger[data-state="open"] {
+  background: var(--fill);
+}
+
+.trigger:active {
+  transform: scale(0.98);
+}
+
+.trigger > span {
+  white-space: nowrap;
+}
+
+/* Phones: the date moves into the menu, the line stays one row. */
+@media (max-width: 419px) {
+  .triggerMeta {
+    display: none;
+  }
+}
+
+.trigger svg {
+  flex: none;
+  color: var(--text-secondary);
+}
+
+.triggerMeta {
+  font-weight: var(--weight-regular);
+  color: var(--text-secondary);
+}
+
+.spinner {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 1px;
+  border-radius: 50%;
+  border: 2px solid var(--text-secondary);
+  border-right-color: transparent;
+  animation: spin 0.8s linear infinite;
+}
+
+.tooltip {
+  z-index: 90;
+  display: grid;
+  gap: 2px;
+  max-width: min(340px, calc(100vw - 24px));
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-s);
+  background: var(--bg-elevated);
+  border: 1px solid var(--floating-border);
+  box-shadow: var(--shadow-float);
+  font-size: var(--text-13);
+  line-height: 1.45;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  animation: pop-in var(--dur-2) var(--ease);
+}
+
+.tooltipLabel {
+  font-weight: var(--weight-bold);
+  color: var(--text-secondary);
+}
+
+.menu {
+  z-index: 50;
+  width: min(320px, calc(100vw - 24px));
+  max-height: min(420px, var(--radix-dropdown-menu-content-available-height));
+  overflow-y: auto;
+  padding: var(--space-1);
+  border-radius: var(--radius-m);
+  background: var(--bg-elevated);
+  border: 1px solid var(--floating-border);
+  box-shadow: var(--shadow-float);
+  transform-origin: var(--radix-dropdown-menu-content-transform-origin);
+  animation: pop-in var(--dur-2) var(--ease);
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+.menuLabel {
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  font-size: var(--text-13);
+  font-weight: var(--weight-bold);
+  color: var(--text-secondary);
+}
+
+.item {
+  display: flex;
+  gap: var(--space-2);
+  min-height: var(--tap);
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-2);
+  border-radius: var(--radius-s);
+  font-size: var(--text-15);
+  color: var(--text);
+  cursor: default;
+  user-select: none;
+  outline: none;
+}
+
+.item[data-highlighted] {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.check {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: calc(var(--text-15) * var(--leading-text));
+  color: var(--accent-text);
+}
+
+.item[data-highlighted] .check {
+  color: inherit;
+}
+
+.itemBody {
+  display: grid;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.itemTitle {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-weight: var(--weight-medium);
+}
+
+.itemTime,
+.itemMeta,
+.itemWish {
+  font-size: var(--text-13);
+  font-weight: var(--weight-regular);
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.itemWish {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.item[data-highlighted] :is(.itemTime, .itemMeta, .itemWish) {
+  color: inherit;
+}
+
+/* --- Regeneration in progress --- */
+.status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--text-15);
+  color: var(--text-secondary);
+  animation: fade-in var(--dur-2) var(--ease);
+}
+
+.status svg {
+  flex: none;
+}
+
+.elapsed {
+  color: var(--text-secondary);
+}
+
+/* --- Failed regeneration --- */
+.error {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-1) var(--space-1) var(--space-4);
+  border-radius: var(--radius-m);
+  background: var(--danger-soft);
+  animation: fade-in var(--dur-2) var(--ease);
+}
+
+.errorIcon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--danger);
+}
+
+.errorBody {
+  flex: 1;
+  min-width: 0;
+}
+
+.errorTitle {
+  font-size: var(--text-15);
+  font-weight: var(--weight-bold);
+}
+
+.errorText {
+  margin-top: 2px;
+  font-size: var(--text-15);
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.retry {
+  margin: var(--space-1) 0 0 calc(var(--space-3) * -1);
+}
+
+.dismiss {
+  margin-top: calc(var(--space-2) * -1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}
