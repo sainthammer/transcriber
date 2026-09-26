@@ -34,7 +34,8 @@ cd web && npm run dev | build | lint           # интерфейс (npm, lock �
 - Формат расшифровки `[ЧЧ:ММ:СС] текст` — контракт между `cli.fmt_time`,
   `summary_types.transcript_duration` и промптами. Меняешь в одном месте — меняй везде.
 - Схема summary связывает четыре места: `summary_types/<id>.py` (схема и рендер),
-  `docx_export.py`, тесты и `web/` (`api/types.ts`, `job/Summary.tsx`). Меняешь одно — обнови все.
+  `docx_export.py`, тесты и `web/` (`api/types.ts`, `job/Summary.tsx`). Меняешь одно — обнови все;
+  расхождение полей с `types.ts` ловит `tests/test_web_contract.py`.
 - Настройки моделей и типы summary в `summary.py` передаются явно: `LLMConfig` и `Registry`
   (CLI — из `.env` и встроенных типов, сервер — из базы на каждую задачу: база → `.env` →
   умолчание). Каждый запрос к модели отдаёт `Usage` через `on_usage` — так считается расход.
