@@ -4,14 +4,16 @@ import os
 from dataclasses import dataclass
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, Security
+from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import sessionmaker
 
+from .api_docs import UNAUTHORIZED, error, session_cookie
 from .db import User, UserSession, utcnow
-from .security import (SESSION_COOKIE, SESSION_DAYS, LoginThrottle, check_password_strength,
-                       hash_password, new_session_token, token_hash, verify_password)
+from .security import (MIN_PASSWORD_LENGTH, SESSION_COOKIE, SESSION_DAYS, LoginThrottle,
+                       check_password_strength, hash_password, new_session_token, token_hash,
+                       verify_password)
 
 
 @dataclass(frozen=True)
@@ -69,8 +71,8 @@ def first_admin_id(sessions: sessionmaker) -> int | None:
 
 # --- dependencies ---
 
-def current_user(request: Request) -> CurrentUser:
-    token = request.cookies.get(SESSION_COOKIE)
+def current_user(request: Request,
+                 token: str | None = Security(session_cookie)) -> CurrentUser:
     if not token:
         raise HTTPException(401, "Нужно войти")
     sessions: sessionmaker = request.app.state.sessions
@@ -100,16 +102,23 @@ def admin_user(user: CurrentUser = Depends(current_user)) -> CurrentUser:
 # --- routes ---
 
 class LoginRequest(BaseModel):
-    email: str
+    email: str = Field(examples=["admin@example.com"])
     password: str
 
 
 class PasswordRequest(BaseModel):
     current_password: str
-    new_password: str
+    new_password: str = Field(description=f"Не короче {MIN_PASSWORD_LENGTH} символов")
 
 
-router = APIRouter(prefix="/api/auth")
+class UserPublic(BaseModel):
+    id: int
+    email: str
+    name: str
+    role: str = Field(description="`admin` или `user`")
+
+
+router = APIRouter(prefix="/api/auth", tags=["Вход"])
 throttle = LoginThrottle()
 
 
@@ -121,7 +130,11 @@ def _set_cookie(response: Response, token: str) -> None:
     )
 
 
-@router.post("/login")
+@router.post("/login", summary="Войти", response_model=UserPublic, responses={
+    401: error("Неверный email или пароль"),
+    403: error("Учётная запись отключена"),
+    429: error("Слишком много неудачных попыток, вход временно закрыт"),
+})
 def login(body: LoginRequest, request: Request, response: Response):
     email = normalize_email(body.email)
     ip = request.client.host if request.client else ""
@@ -145,7 +158,8 @@ def login(body: LoginRequest, request: Request, response: Response):
     return me.public()
 
 
-@router.post("/logout", status_code=204)
+@router.post("/logout", status_code=204, summary="Выйти",
+             description="Удаляет сессию и куку. Без сессии тоже отвечает 204.")
 def logout(request: Request, response: Response):
     if token := request.cookies.get(SESSION_COOKIE):
         with request.app.state.sessions.begin() as db:
@@ -153,12 +167,15 @@ def logout(request: Request, response: Response):
     response.delete_cookie(SESSION_COOKIE, path="/")
 
 
-@router.get("/me")
+@router.get("/me", summary="Текущий пользователь", response_model=UserPublic,
+            responses=UNAUTHORIZED)
 def me(user: CurrentUser = Depends(current_user)):
     return user.public()
 
 
-@router.post("/password", status_code=204)
+@router.post("/password", status_code=204, summary="Сменить пароль",
+             description="Остальные сессии пользователя завершаются, текущая остаётся.",
+             responses={**UNAUTHORIZED, 400: error("Текущий пароль неверный")})
 def change_password(body: PasswordRequest, request: Request,
                     user: CurrentUser = Depends(current_user)):
     try:

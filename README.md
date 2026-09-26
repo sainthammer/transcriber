@@ -115,6 +115,10 @@ uv run transcriber-admin list-users
 `cd web && npm run dev` (http://localhost:5173). В dev-режиме есть моки состояний:
 `?mock=states`, `?mock=empty`, `?mock=offline`.
 
+Документация API — http://127.0.0.1:8000/api/docs (Swagger UI) и `/api/redoc`, схема —
+`/api/openapi.json`. Чтобы вызывать методы из Swagger, сначала выполните там
+`POST /api/auth/login`: сессия хранится в куке, её браузер подставит сам.
+
 ## Запуск в Docker
 
 Всё приложение — база, сервер и собранный интерфейс — одной командой. Нужен только Docker
@@ -235,7 +239,7 @@ Markdown. Общие правила — в `base.md` и `base.py`. Правил�
 | `transcriber/summary.py` | команда `summarize`: запросы к DeepSeek и Ollama, выбор провайдера и типа |
 | `transcriber/summary_types/` | типы summary: общая схема и правила (`base.*`) и по паре файлов на тип |
 | `transcriber/docx_export.py` | Word-версия summary: Markdown из `render_markdown` → стилизованный .docx |
-| `transcriber/server/` | команда `transcriber-web`: сервер веб-интерфейса — вход (`auth.py`), записи (`jobs.py`), админка (`admin.py`, `settings.py`, `types_store.py`), база (`db.py`, `migrations/`) |
+| `transcriber/server/` | команда `transcriber-web`: сервер веб-интерфейса — вход (`auth.py`), записи (`jobs.py`), админка (`admin.py`, `settings.py`, `types_store.py`), база (`db.py`, `migrations/`), описание API для Swagger (`api_docs.py`) |
 | `transcriber/server/manage.py` | команда `transcriber-admin`: пользователи из командной строки |
 | `transcriber/models.py` | команда `download-model`: скачать модель распознавания, если её нет |
 | `docker-compose.yml`, `Dockerfile` | Postgres для разработки; всё приложение в Docker (см. «Запуск в Docker») |

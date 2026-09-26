@@ -14,14 +14,16 @@ from urllib.parse import quote
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Path as PathParam
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from ..docx_export import markdown_to_docx
 from ..summary import PROVIDERS
 from ..summary_types import strip_empty_sections, transcript_duration
-from . import admin, auth
+from . import admin, api_docs, auth
+from .api_docs import JOB_NOT_FOUND, UNAUTHORIZED, error
 from .auth import CurrentUser, current_user
 from .db import database_url, make_engine, make_sessionmaker, migrate
 from .jobs import Job, JobManager, Pipeline
@@ -49,9 +51,26 @@ DOWNLOADS = {
 DOCX_NAMES = {"summary.docx", "digest.docx"}
 
 
+PROVIDER_HELP = "`auto`, `deepseek` или `ollama`; `auto` выбирает по размеру расшифровки"
+SUMMARY_TYPE_HELP = "id типа из `GET /api/config` или `auto` — модель определит сама"
+
+
 class SummaryRequest(BaseModel):
-    provider: str = "auto"
-    summary_type: str = "auto"
+    provider: str = Field("auto", description=PROVIDER_HELP)
+    summary_type: str = Field("auto", description=SUMMARY_TYPE_HELP)
+
+
+class JobCreated(BaseModel):
+    id: str
+
+
+class Health(BaseModel):
+    status: str
+    database: bool
+
+
+def _stream_response(description: str) -> dict:
+    return {200: {"description": description, "content": {"text/event-stream": {}}}}
 
 
 def _sse(event: str, data) -> str:
@@ -86,7 +105,10 @@ def create_app(jobs_dir: Path = DEFAULT_JOBS_DIR, pipeline=None, start_worker: b
     if start_worker:
         manager.start()
 
-    app = FastAPI(title="Транскрибация", docs_url="/api/docs", openapi_url="/api/openapi.json")
+    app = FastAPI(title=api_docs.TITLE, version=api_docs.VERSION,
+                  description=api_docs.DESCRIPTION, openapi_tags=api_docs.TAGS,
+                  openapi_url="/api/openapi.json", docs_url=None, redoc_url=None)
+    api_docs.mount_docs(app)
     app.state.sessions = sessions
     app.state.settings = settings
     app.state.types = types
@@ -110,9 +132,11 @@ def create_app(jobs_dir: Path = DEFAULT_JOBS_DIR, pipeline=None, start_worker: b
         if summary_type != "auto" and summary_type not in types.registry().enabled:
             raise HTTPException(422, f"Неизвестный тип summary: {summary_type}")
 
-    @app.get("/api/health")
+    @app.get("/api/health", tags=["Служебное"], summary="Проверка работоспособности",
+             description="Для healthcheck Docker: без входа, проверяет только доступность базы.",
+             response_model=Health,
+             responses={503: {"model": Health, "description": "База недоступна"}})
     def health(request: Request):
-        """Liveness for the Docker healthcheck: no session, just the database."""
         try:
             with request.app.state.sessions() as s:
                 s.execute(text("SELECT 1"))
@@ -121,20 +145,31 @@ def create_app(jobs_dir: Path = DEFAULT_JOBS_DIR, pipeline=None, start_worker: b
                             media_type="application/json")
         return {"status": "ok", "database": True}
 
-    @app.get("/api/config")
+    @app.get("/api/config", tags=["Служебное"], summary="Настройки для формы загрузки",
+             description="Доступность провайдеров, включённые типы summary и значения по "
+                         "умолчанию.", responses=UNAUTHORIZED)
     def config(user: CurrentUser = Depends(current_user)):
         return {"providers": pipeline.provider_status(settings.llm_config()),
                 "summary_types": types.public_list(),
                 "defaults": {"provider": "auto", "summary": True, "summary_type": "auto"}}
 
-    @app.get("/api/jobs")
+    @app.get("/api/jobs", tags=["Записи"], summary="Список записей",
+             description="Записи текущего пользователя, новые первыми.", responses=UNAUTHORIZED)
     def list_jobs(user: CurrentUser = Depends(current_user)):
         jobs = sorted(manager.for_user(user.id), key=lambda j: j.created_at, reverse=True)
         return [manager.list_item(j) for j in jobs]
 
-    @app.post("/api/jobs", status_code=201)
-    def create_job(file: UploadFile = File(...), provider: str = Form("auto"),
-                   summary: bool = Form(True), summary_type: str = Form("auto"),
+    @app.post("/api/jobs", status_code=201, tags=["Записи"], summary="Загрузить запись",
+              description="Ставит запись в очередь на расшифровку и summary. Прогресс — "
+                          "`GET /api/jobs/{job_id}/events`.",
+              response_model=JobCreated,
+              responses={**UNAUTHORIZED,
+                         415: error("Файл не читается как аудио или видео"),
+                         422: error("Неизвестный провайдер или тип summary")})
+    def create_job(file: UploadFile = File(..., description="Аудио или видео"),
+                   provider: str = Form("auto", description=PROVIDER_HELP),
+                   summary: bool = Form(True, description="Делать ли summary после расшифровки"),
+                   summary_type: str = Form("auto", description=SUMMARY_TYPE_HELP),
                    user: CurrentUser = Depends(current_user)):
         check_options(provider, summary_type)
         try:
@@ -145,15 +180,25 @@ def create_app(jobs_dir: Path = DEFAULT_JOBS_DIR, pipeline=None, start_worker: b
             raise HTTPException(415, str(e)) from None
         return {"id": job.id}
 
-    @app.get("/api/jobs/{job_id}")
+    @app.get("/api/jobs/{job_id}", tags=["Записи"], summary="Запись целиком",
+             description="Состояние, расшифровка и summary.",
+             responses={**UNAUTHORIZED, **JOB_NOT_FOUND})
     def job_detail(job: Job = Depends(get_job)):
         return manager.detail(job)
 
-    @app.delete("/api/jobs/{job_id}", status_code=204)
+    @app.delete("/api/jobs/{job_id}", status_code=204, tags=["Записи"],
+                summary="Удалить запись", description="Идущая обработка прерывается.",
+                responses={**UNAUTHORIZED, **JOB_NOT_FOUND})
     def delete_job(job: Job = Depends(get_job)):
         manager.delete(job.id)
 
-    @app.post("/api/jobs/{job_id}/summary", status_code=202)
+    @app.post("/api/jobs/{job_id}/summary", status_code=202, tags=["Записи"],
+              summary="Повторить summary",
+              description="Заново делает summary по готовой расшифровке, в том числе другим "
+                          "провайдером или типом.", response_model=JobCreated,
+              responses={**UNAUTHORIZED, **JOB_NOT_FOUND,
+                         409: error("Запись ещё обрабатывается или расшифровки нет"),
+                         422: error("Неизвестный провайдер или тип summary")})
     def retry_summary(body: SummaryRequest, job: Job = Depends(get_job)):
         check_options(body.provider, body.summary_type)
         try:
@@ -162,15 +207,27 @@ def create_app(jobs_dir: Path = DEFAULT_JOBS_DIR, pipeline=None, start_worker: b
             raise HTTPException(409, str(e)) from None
         return {"id": job.id}
 
-    @app.get("/api/jobs/{job_id}/audio")
+    @app.get("/api/jobs/{job_id}/audio", tags=["Записи"], summary="Аудио для прослушивания",
+             responses={200: {"description": "Аудиофайл", "content": {"audio/*": {}}},
+                        **UNAUTHORIZED, **JOB_NOT_FOUND,
+                        409: error("Аудио для прослушивания ещё готовится")})
     def job_audio(job: Job = Depends(get_job)):
         path = manager.playback_path(job)
         if path is None:
             raise HTTPException(409, "Аудио для прослушивания ещё готовится")
         return FileResponse(path)
 
-    @app.get("/api/jobs/{job_id}/download/{name}")
-    def job_download(name: str, job: Job = Depends(get_job)):
+    @app.get("/api/jobs/{job_id}/download/{name}", tags=["Экспорт"], summary="Скачать файл",
+             description="`transcript.txt` — расшифровка с таймкодами; `summary.md`, "
+                         "`summary.json` — summary; `summary.docx` — summary в Word без "
+                         "таймкодов; `digest.docx` — короткая версия для печати.",
+             responses={200: {"description": "Файл",
+                              "content": {media: {} for media, _ in DOWNLOADS.values()}},
+                        **UNAUTHORIZED,
+                        404: error("Записи или файла нет (например, summary ещё не готово)")})
+    def job_download(name: str = PathParam(description="Имя файла",
+                                           examples=list(DOWNLOADS)),
+                     job: Job = Depends(get_job)):
         if name not in DOWNLOADS:
             raise HTTPException(404, "Файл не найден")
         media_type, suffix = DOWNLOADS[name]
@@ -195,7 +252,12 @@ def create_app(jobs_dir: Path = DEFAULT_JOBS_DIR, pipeline=None, start_worker: b
             raise HTTPException(404, "Файл не найден")
         return FileResponse(path, media_type=media_type, filename=filename)
 
-    @app.get("/api/jobs/{job_id}/events")
+    @app.get("/api/jobs/{job_id}/events", tags=["Прогресс"], summary="Прогресс записи (SSE)",
+             description="Первым приходит `snapshot` — запись целиком; для готовой записи поток "
+                         "на нём и заканчивается. Дальше: `queue` (место в очереди), `stage` "
+                         "(стадия), `progress` (секунды распознанного аудио), `phrase` (новая "
+                         "фраза расшифровки) и в конце `done` (запись целиком) или `error`.",
+             responses={**_stream_response("Поток событий"), **UNAUTHORIZED, **JOB_NOT_FOUND})
     async def job_events(request: Request, job: Job = Depends(get_job)):
         async def stream():
             yield _sse("snapshot", manager.detail(job))
@@ -238,7 +300,10 @@ def create_app(jobs_dir: Path = DEFAULT_JOBS_DIR, pipeline=None, start_worker: b
         return StreamingResponse(stream(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-    @app.get("/api/events")
+    @app.get("/api/events", tags=["Прогресс"], summary="Изменения списка записей (SSE)",
+             description="`snapshot` со всеми записями, затем `job_updated` и `job_deleted`. "
+                         "Поток не заканчивается сам.",
+             responses={**_stream_response("Поток событий"), **UNAUTHORIZED})
     async def all_events(request: Request, user: CurrentUser = Depends(current_user)):
         def snapshot() -> dict:
             return {j.id: manager.list_item(j) for j in manager.for_user(user.id)}

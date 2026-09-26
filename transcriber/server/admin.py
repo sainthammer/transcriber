@@ -4,16 +4,26 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 
 from .. import summary as summary_mod
+from .api_docs import FORBIDDEN, UNAUTHORIZED, error
 from .auth import CurrentUser, admin_user, create_user
 from .db import JobRecord, UsageRecord, User, UserSession, iso, utcnow
 from .security import check_password_strength, hash_password
 from .types_store import Conflict
 
-router = APIRouter(prefix="/api/admin", dependencies=[Depends(admin_user)])
+router = APIRouter(prefix="/api/admin", dependencies=[Depends(admin_user)],
+                   responses={**UNAUTHORIZED, **FORBIDDEN})
+
+SETTINGS = "Админка: настройки"
+TYPES = "Админка: типы summary"
+USERS = "Админка: пользователи"
+USAGE = "Админка: расход"
+INVALID = {422: error("Некорректные данные")}
+TYPE_NOT_FOUND = {404: error("Тип не найден")}
+USER_NOT_FOUND = {404: error("Пользователь не найден")}
 
 
 def _state(request: Request):
@@ -31,12 +41,16 @@ def _settings_view(request: Request) -> dict:
     return {"items": state.settings.admin_view(), "ollama_models": models, "ollama_error": error}
 
 
-@router.get("/settings")
+@router.get("/settings", tags=[SETTINGS], summary="Настройки",
+            description="Настройки с источником значения (база, `.env` или умолчание) и "
+                        "модели, установленные в Ollama.")
 def get_settings(request: Request):
     return _settings_view(request)
 
 
-@router.put("/settings")
+@router.put("/settings", tags=[SETTINGS], summary="Изменить настройки",
+            description="Передаются только изменённые ключи; `null` или пустая строка "
+                        "возвращают значение из `.env` или умолчание.", responses=INVALID)
 def put_settings(request: Request, changes: dict = Body(...),
                  user: CurrentUser = Depends(admin_user)):
     try:
@@ -47,10 +61,12 @@ def put_settings(request: Request, changes: dict = Body(...),
 
 
 class TestRequest(BaseModel):
-    provider: str
+    provider: str = Field(description="`deepseek` или `ollama`")
 
 
-@router.post("/settings/test")
+@router.post("/settings/test", tags=[SETTINGS], summary="Проверить провайдера",
+             description="Пробный запрос к провайдеру с текущими настройками. Неудача — "
+                         "это `ok: false` с сообщением, а не код ошибки.", responses=INVALID)
 def test_provider(body: TestRequest, request: Request):
     config = _state(request).settings.llm_config()
     try:
@@ -69,12 +85,14 @@ def test_provider(body: TestRequest, request: Request):
 
 # --- summary types ---
 
-@router.get("/summary-types")
+@router.get("/summary-types", tags=[TYPES], summary="Типы summary",
+            description="Встроенные и свои типы, включая отключённые.")
 def list_types(request: Request):
     return _state(request).types.admin_list()
 
 
-@router.post("/summary-types", status_code=201)
+@router.post("/summary-types", status_code=201, tags=[TYPES], summary="Создать тип",
+             responses={**INVALID, 409: error("Тип с таким id уже есть")})
 def create_type(request: Request, data: dict = Body(...)):
     try:
         return _state(request).types.create(data)
@@ -84,7 +102,9 @@ def create_type(request: Request, data: dict = Body(...)):
         raise HTTPException(409, str(e)) from None
 
 
-@router.put("/summary-types/{type_id}")
+@router.put("/summary-types/{type_id}", tags=[TYPES], summary="Изменить тип",
+            responses={**TYPE_NOT_FOUND, **INVALID,
+                       409: error("Должен остаться хотя бы один включённый тип")})
 def update_type(type_id: str, request: Request, data: dict = Body(...)):
     try:
         return _state(request).types.update(type_id, data)
@@ -96,7 +116,12 @@ def update_type(type_id: str, request: Request, data: dict = Body(...)):
         raise HTTPException(409, str(e)) from None
 
 
-@router.delete("/summary-types/{type_id}", status_code=204)
+@router.delete("/summary-types/{type_id}", status_code=204, tags=[TYPES], summary="Удалить тип",
+               description="Встроенные и используемые в записях типы не удаляются — их можно "
+                           "отключить.",
+               responses={**TYPE_NOT_FOUND,
+                          409: error("Тип встроенный, используется в записях или последний "
+                                     "включённый")})
 def delete_type(type_id: str, request: Request):
     try:
         _state(request).types.delete(type_id)
@@ -107,15 +132,17 @@ def delete_type(type_id: str, request: Request):
 
 
 class PromptRequest(BaseModel):
-    prompt: str | None
+    prompt: str | None = Field(description="`null` — вернуть встроенный промпт")
 
 
-@router.get("/base-prompt")
+@router.get("/base-prompt", tags=[TYPES], summary="Общий промпт",
+            description="Правила для модели, общие для всех типов summary.")
 def get_base_prompt(request: Request):
     return _state(request).types.base_prompt_view()
 
 
-@router.put("/base-prompt")
+@router.put("/base-prompt", tags=[TYPES], summary="Изменить общий промпт",
+            responses=INVALID)
 def put_base_prompt(body: PromptRequest, request: Request, user: CurrentUser = Depends(admin_user)):
     try:
         _state(request).types.set_base_prompt(body.prompt, user.id)
@@ -149,7 +176,8 @@ def _user_view(u: User, stats: dict) -> dict:
             **stats.get(u.id, {"jobs_count": 0, "audio_sec": 0.0, "tokens_total": 0})}
 
 
-@router.get("/users")
+@router.get("/users", tags=[USERS], summary="Пользователи",
+            description="С числом записей, минутами аудио и расходом токенов.")
 def list_users(request: Request):
     with _state(request).sessions() as db:
         users = db.scalars(select(User).order_by(User.created_at)).all()
@@ -159,12 +187,13 @@ def list_users(request: Request):
 
 class NewUser(BaseModel):
     email: str
-    name: str = ""
+    name: str = Field("", description="Пусто — часть email до @")
     password: str
-    role: str = "user"
+    role: str = Field("user", description="`admin` или `user`")
 
 
-@router.post("/users", status_code=201)
+@router.post("/users", status_code=201, tags=[USERS], summary="Добавить пользователя",
+             responses={**INVALID, 409: error("Пользователь с таким email уже есть")})
 def add_user(body: NewUser, request: Request):
     sessions = _state(request).sessions
     try:
@@ -179,12 +208,15 @@ def add_user(body: NewUser, request: Request):
 
 class UserPatch(BaseModel):
     name: str | None = None
-    role: str | None = None
-    is_active: bool | None = None
-    password: str | None = None
+    role: str | None = Field(None, description="`admin` или `user`")
+    is_active: bool | None = Field(None, description="`false` завершает сессии пользователя")
+    password: str | None = Field(None, description="Новый пароль; завершает сессии пользователя")
 
 
-@router.patch("/users/{user_id}")
+@router.patch("/users/{user_id}", tags=[USERS], summary="Изменить пользователя",
+              description="Передаются только изменяемые поля.",
+              responses={**USER_NOT_FOUND, **INVALID,
+                         409: error("Нельзя отключить себя или снять с себя права администратора")})
 def patch_user(user_id: int, body: UserPatch, request: Request,
                me: CurrentUser = Depends(admin_user)):
     if user_id == me.id and (body.is_active is False or body.role not in (None, "admin")):
@@ -217,7 +249,9 @@ def patch_user(user_id: int, body: UserPatch, request: Request,
         return _user_view(db.get(User, user_id), _user_stats(db))
 
 
-@router.get("/users/{user_id}/jobs")
+@router.get("/users/{user_id}/jobs", tags=[USERS], summary="Записи пользователя",
+            description="Только метаданные и расход, без расшифровок и summary.",
+            responses=USER_NOT_FOUND)
 def user_jobs(user_id: int, request: Request):
     state = _state(request)
     with state.sessions() as db:
@@ -229,8 +263,9 @@ def user_jobs(user_id: int, request: Request):
 
 # --- usage ---
 
-@router.get("/usage")
-def usage(request: Request, days: int = Query(30, ge=1, le=366)):
+@router.get("/usage", tags=[USAGE], summary="Расход",
+            description="Токены по пользователям, моделям и дням и минуты распознавания.")
+def usage(request: Request, days: int = Query(30, ge=1, le=366, description="За сколько дней")):
     now = utcnow()
     since = now - timedelta(days=days)
     with _state(request).sessions() as db:

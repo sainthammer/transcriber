@@ -385,6 +385,24 @@ def test_frontend_fallbacks(make_client, tmp_path):
     assert client.get("/../pyproject.toml").text == "<div id=root></div>"  # no traversal
 
 
+def test_api_docs(make_client):
+    client = make_client(login=None)  # docs need no sign-in
+    schema = client.get("/api/openapi.json").json()
+    tags = [t["name"] for t in schema["tags"]]
+    for path, methods in schema["paths"].items():
+        for method, op in methods.items():
+            assert op.get("summary") and set(op["tags"]) <= set(tags), (method, path)
+            if path not in ("/api/health", "/api/auth/login", "/api/auth/logout"):
+                assert "401" in op["responses"], (method, path)
+    assert "/api/{path}" not in schema["paths"]
+    assert "404" in schema["paths"]["/api/jobs/{job_id}"]["get"]["responses"]
+    assert "403" in schema["paths"]["/api/admin/users"]["get"]["responses"]
+
+    swagger = client.get("/api/docs")
+    assert swagger.status_code == 200 and '"docExpansion": "none"' in swagger.text
+    assert client.get("/api/redoc").status_code == 200
+
+
 # --- admin: users ---
 
 def test_admin_api_is_admin_only(make_client):
