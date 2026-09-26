@@ -5,17 +5,22 @@ import json
 import os
 import re
 import sys
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import httpx
 from dotenv import load_dotenv
 from openai import OpenAI
-from pydantic import ValidationError
+from pydantic import ValidationError, create_model
 from tqdm import tqdm
 
-from .meeting_summary import MeetingSummary, render_markdown, system_prompt, transcript_duration
+from .docx_export import save_docx
+from .summary_types import DEFAULT_REGISTRY, TYPES, Registry, SummaryBase, transcript_duration
 
 PROVIDERS = ("auto", "deepseek", "ollama")
+SUMMARY_TYPES = ("auto", *TYPES)
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_DEFAULT_MODEL = "deepseek-flash"
@@ -43,13 +48,71 @@ MAX_OUTPUT_TOKENS = 8192
 DEEPSEEK_TEMPERATURE = 0.3
 MAX_ATTEMPTS = 2
 
+# The type of a meeting is clear from its opening minutes; no need to send everything.
+CLASSIFY_CHARS = 8000
 
-def _messages(transcript: str) -> list[dict]:
-    schema = json.dumps(MeetingSummary.model_json_schema(), ensure_ascii=False)
-    system = f"{system_prompt()}\n## JSON-схема ответа\n\n```json\n{schema}\n```\n"
+
+@dataclass(frozen=True)
+class LLMConfig:
+    """Where summaries are generated. The CLI reads it from .env, the web server from
+    its settings (admin overrides on top of .env)."""
+
+    deepseek_api_key: str | None = None
+    deepseek_model: str = DEEPSEEK_DEFAULT_MODEL
+    ollama_host: str = OLLAMA_DEFAULT_HOST
+    ollama_model: str = OLLAMA_DEFAULT_MODEL
+    ollama_max_context: int = OLLAMA_DEFAULT_MAX_CONTEXT
+
+    @classmethod
+    def from_env(cls) -> "LLMConfig":
+        load_dotenv()
+        return cls(
+            deepseek_api_key=os.getenv("DEEPSEEK_API_KEY") or None,
+            deepseek_model=os.getenv("DEEPSEEK_MODEL", DEEPSEEK_DEFAULT_MODEL),
+            ollama_host=os.getenv("OLLAMA_HOST", OLLAMA_DEFAULT_HOST),
+            ollama_model=os.getenv("OLLAMA_MODEL", OLLAMA_DEFAULT_MODEL),
+            ollama_max_context=int(os.getenv("OLLAMA_MAX_CONTEXT", OLLAMA_DEFAULT_MAX_CONTEXT)),
+        )
+
+
+@dataclass(frozen=True)
+class Usage:
+    """Tokens spent by one model request (retries and classification count separately)."""
+
+    provider: str  # "deepseek" | "ollama"
+    model: str
+    kind: str  # "classify" | "summary"
+    prompt_tokens: int
+    completion_tokens: int
+
+
+UsageCallback = Callable[[Usage], None]
+
+
+def _messages(transcript: str, summary_type: str,
+              registry: Registry = DEFAULT_REGISTRY) -> list[dict]:
+    schema = json.dumps(registry.get(summary_type).model.model_json_schema(), ensure_ascii=False)
+    system = (f"{registry.system_prompt(summary_type)}\n## JSON-схема ответа\n\n"
+              f"```json\n{schema}\n```\n")
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": f"Расшифровка:\n\n{transcript}"},
+    ]
+
+
+def _classification_model(registry: Registry):
+    return create_model("Classification",
+                        meeting_type=(Literal[tuple(registry.enabled)], ...))
+
+
+def _classify_messages(transcript: str, registry: Registry = DEFAULT_REGISTRY) -> list[dict]:
+    options = "\n".join(f"- `{t.id}` — {t.description}" for t in registry.enabled.values())
+    system = ("Определи тип рабочей встречи по началу её расшифровки.\n\n"
+              f"Варианты:\n{options}\n\n"
+              'Ответь одним JSON-объектом: {"meeting_type": "<вариант>"}.')
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": f"Начало расшифровки:\n\n{transcript[:CLASSIFY_CHARS]}"},
     ]
 
 
@@ -58,15 +121,18 @@ def _estimate_tokens(messages: list[dict]) -> int:
     return sum(len(m["content"]) for m in messages) // CHARS_PER_TOKEN + MAX_OUTPUT_TOKENS
 
 
-def _chat_deepseek(messages: list[dict], model: str | None) -> str:
-    api_key = os.getenv("DEEPSEEK_API_KEY")
-    if not api_key:
-        raise RuntimeError("DEEPSEEK_API_KEY не задан (добавьте его в .env)")
+def _chat_deepseek(messages: list[dict], model: str | None, schema: dict,
+                   config: LLMConfig) -> tuple[str, Usage | None]:
+    """Returns the reply and token usage (None if the API didn't report it)."""
+    if not config.deepseek_api_key:
+        raise RuntimeError("не задан ключ DeepSeek API (DEEPSEEK_API_KEY)")
 
-    client = OpenAI(api_key=api_key, base_url=DEEPSEEK_BASE_URL, timeout=600)
+    model = model or config.deepseek_model
+    client = OpenAI(api_key=config.deepseek_api_key, base_url=DEEPSEEK_BASE_URL, timeout=600)
     response = client.chat.completions.create(
-        model=model or os.getenv("DEEPSEEK_MODEL", DEEPSEEK_DEFAULT_MODEL),
+        model=model,
         messages=messages,
+        # JSON mode doesn't take a schema; it's already spelled out in the system prompt.
         response_format={"type": "json_object"},
         max_tokens=DEEPSEEK_MAX_TOKENS,
         temperature=DEEPSEEK_TEMPERATURE,
@@ -74,11 +140,13 @@ def _chat_deepseek(messages: list[dict], model: str | None) -> str:
     choice = response.choices[0]
     if choice.finish_reason == "length":
         raise RuntimeError(f"ответ DeepSeek обрезан на {DEEPSEEK_MAX_TOKENS} токенах")
-    return choice.message.content or ""
+    usage = response.usage and Usage("deepseek", model, "", response.usage.prompt_tokens,
+                                     response.usage.completion_tokens)
+    return choice.message.content or "", usage
 
 
-def _ollama_host() -> str:
-    host = os.getenv("OLLAMA_HOST", OLLAMA_DEFAULT_HOST)
+def _ollama_host(config: LLMConfig) -> str:
+    host = config.ollama_host
     return host if host.startswith("http") else f"http://{host}"
 
 
@@ -88,39 +156,73 @@ def _ollama_client() -> httpx.Client:
     return httpx.Client(trust_env=False, timeout=None)
 
 
-def _ollama_context_limit(model: str) -> int:
+class OllamaUnavailable(RuntimeError):
+    def __init__(self, message: str, reason: str):
+        super().__init__(message)
+        self.reason = reason  # "not_running" | "model_missing"
+
+
+def _ollama_context_limit(config: LLMConfig) -> int:
     """Usable context: the model's own limit capped by OLLAMA_MAX_CONTEXT."""
-    limit = int(os.getenv("OLLAMA_MAX_CONTEXT", OLLAMA_DEFAULT_MAX_CONTEXT))
+    limit, model, host = config.ollama_max_context, config.ollama_model, _ollama_host(config)
     try:
         with _ollama_client() as client:
-            resp = client.post(f"{_ollama_host()}/api/show", json={"model": model}, timeout=10)
+            resp = client.post(f"{host}/api/show", json={"model": model}, timeout=10)
     except httpx.TransportError:
-        raise RuntimeError(f"Ollama не отвечает на {_ollama_host()}") from None
+        raise OllamaUnavailable(f"Ollama не отвечает на {host}", "not_running") from None
     if resp.status_code != 200:
-        raise RuntimeError(f"в Ollama нет модели {model}")
+        raise OllamaUnavailable(f"в Ollama нет модели {model}", "model_missing")
     info = resp.json().get("model_info", {})
     model_ctx = next((v for k, v in info.items() if k.endswith(".context_length")), limit)
     return min(limit, model_ctx)
 
 
-def _chat_ollama(messages: list[dict], model: str | None) -> str:
-    host = _ollama_host()
+def ollama_models(config: LLMConfig) -> list[dict]:
+    """Models installed in Ollama: [{name, size_bytes}]. Raises OllamaUnavailable."""
+    host = _ollama_host(config)
+    try:
+        with _ollama_client() as client:
+            resp = client.get(f"{host}/api/tags", timeout=5)
+            resp.raise_for_status()
+    except httpx.HTTPError:
+        raise OllamaUnavailable(f"Ollama не отвечает на {host}", "not_running") from None
+    return [{"name": m["name"], "size_bytes": m.get("size", 0)}
+            for m in resp.json().get("models", [])]
+
+
+def check_deepseek(config: LLMConfig) -> str:
+    """Validate the API key with a free request; returns a short status, raises on failure."""
+    if not config.deepseek_api_key:
+        raise RuntimeError("ключ не задан")
+    client = OpenAI(api_key=config.deepseek_api_key, base_url=DEEPSEEK_BASE_URL, timeout=15)
+    models = [m.id for m in client.models.list()]
+    if config.deepseek_model not in models:
+        return (f"Ключ работает, но модели {config.deepseek_model} нет. "
+                f"Доступны: {', '.join(models)}")
+    return f"Ключ работает, модель {config.deepseek_model} доступна"
+
+
+def _chat_ollama(messages: list[dict], model: str | None, schema: dict,
+                 config: LLMConfig) -> tuple[str, Usage | None]:
+    host = _ollama_host(config)
+    model = model or config.ollama_model
     # Ollama's default context window is small and silently truncates long prompts,
     # so size it to the request.
     num_ctx = -(-_estimate_tokens(messages) // 4096) * 4096
 
     payload = {
-        "model": model or os.getenv("OLLAMA_MODEL", OLLAMA_DEFAULT_MODEL),
+        "model": model,
         "messages": messages,
         "stream": True,
         "think": False,
         # Constrains generation to the schema, so the output is always parseable JSON.
-        "format": MeetingSummary.model_json_schema(),
+        "format": schema,
         "options": {"num_ctx": num_ctx, "num_predict": MAX_OUTPUT_TOKENS, **OLLAMA_SAMPLING},
     }
 
-    parts = []
-    bar = tqdm(desc="Генерация", unit=" ток", dynamic_ncols=True, file=sys.stderr)
+    parts, usage = [], None
+    # disable=None: show only in an interactive terminal, not in server logs.
+    bar = tqdm(desc="Генерация", unit=" ток", dynamic_ncols=True, file=sys.stderr, disable=None)
     client = _ollama_client()
     try:
         with bar, client.stream("POST", f"{host}/api/chat", json=payload) as resp:
@@ -132,20 +234,23 @@ def _chat_ollama(messages: list[dict], model: str | None) -> str:
                     raise RuntimeError(f"Ollama: {chunk['error']}")
                 parts.append(chunk.get("message", {}).get("content", ""))
                 bar.update(1)
-                if chunk.get("done") and chunk.get("done_reason") == "length":
-                    raise RuntimeError(f"ответ обрезан на {MAX_OUTPUT_TOKENS} токенах")
+                if chunk.get("done"):
+                    if chunk.get("done_reason") == "length":
+                        raise RuntimeError(f"ответ обрезан на {MAX_OUTPUT_TOKENS} токенах")
+                    usage = Usage("ollama", model, "", chunk.get("prompt_eval_count", 0),
+                                  chunk.get("eval_count", 0))
     except httpx.ConnectError:
         raise RuntimeError(f"Ollama не отвечает на {host} (запустите `ollama serve`)") from None
     finally:
         client.close()
-    return "".join(parts)
+    return "".join(parts), usage
 
 
-def _choose_provider(messages: list[dict]) -> str:
-    model = os.getenv("OLLAMA_MODEL", OLLAMA_DEFAULT_MODEL)
+def _choose_provider(messages: list[dict], config: LLMConfig) -> str:
+    model = config.ollama_model
     needed = _estimate_tokens(messages)
     try:
-        limit = _ollama_context_limit(model)
+        limit = _ollama_context_limit(config)
     except RuntimeError as e:
         print(f"Локальная модель недоступна ({e}) → DeepSeek", file=sys.stderr)
         return "deepseek"
@@ -156,24 +261,92 @@ def _choose_provider(messages: list[dict]) -> str:
     return "deepseek"
 
 
-def _parse(raw: str) -> MeetingSummary:
+def provider_status(config: LLMConfig | None = None) -> dict:
+    """Availability of each provider with a machine-readable reason, for UIs."""
+    config = config or LLMConfig.from_env()
+    try:
+        _ollama_context_limit(config)
+        ollama_reason = None
+    except OllamaUnavailable as e:
+        ollama_reason = e.reason
+    return {
+        "deepseek": {
+            "available": bool(config.deepseek_api_key),
+            "reason": None if config.deepseek_api_key else "no_api_key",
+            "model": config.deepseek_model,
+        },
+        "ollama": {"available": ollama_reason is None, "reason": ollama_reason,
+                   "model": config.ollama_model},
+    }
+
+
+def resolve_provider(transcript: str, provider: str = "auto", config: LLMConfig | None = None,
+                     registry: Registry = DEFAULT_REGISTRY) -> str:
+    """Concrete provider for a request: "auto" picks by transcript size and availability."""
+    if provider != "auto":
+        return provider
+    config = config or LLMConfig.from_env()
+    # Size against the largest type's prompt: the type may not be known yet.
+    largest = max((_messages(transcript, t, registry) for t in registry.enabled),
+                  key=_estimate_tokens)
+    return _choose_provider(largest, config)
+
+
+def _strip_fences(raw: str) -> str:
     # Some models wrap JSON in ```json fences despite JSON mode.
-    raw = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", raw)
-    return MeetingSummary.model_validate_json(raw)
+    return re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", raw)
 
 
-def summarize(transcript: str, provider: str = "auto", model: str | None = None) -> MeetingSummary:
-    """provider: "auto" runs locally if the transcript fits the local model, else DeepSeek."""
-    load_dotenv()
-    messages = _messages(transcript)
-    if provider == "auto":
-        provider = _choose_provider(messages)
+def _parse(raw: str, summary_type: str, registry: Registry = DEFAULT_REGISTRY) -> SummaryBase:
+    return registry.get(summary_type).model.model_validate_json(_strip_fences(raw))
+
+
+def _chat(provider: str, kind: str, on_usage: UsageCallback | None, *args) -> str:
     chat = _chat_ollama if provider == "ollama" else _chat_deepseek
+    raw, usage = chat(*args)
+    if usage and on_usage:
+        on_usage(Usage(usage.provider, usage.model, kind, usage.prompt_tokens,
+                       usage.completion_tokens))
+    return raw
+
+
+def classify(transcript: str, provider: str, model: str | None = None, *,
+             config: LLMConfig | None = None, registry: Registry = DEFAULT_REGISTRY,
+             on_usage: UsageCallback | None = None) -> str:
+    """Detect the summary type from the opening of the transcript; falls back to "meeting"."""
+    config = config or LLMConfig.from_env()
+    classification = _classification_model(registry)
+    raw = _chat(provider, "classify", on_usage, _classify_messages(transcript, registry), model,
+                classification.model_json_schema(), config)
+    try:
+        return classification.model_validate_json(_strip_fences(raw)).meeting_type
+    except ValidationError:
+        fallback = registry.fallback
+        print(f"Не удалось определить тип записи, используем «{registry.get(fallback).label}»",
+              file=sys.stderr)
+        return fallback
+
+
+def summarize(transcript: str, provider: str = "auto", model: str | None = None,
+              summary_type: str = "auto", *, config: LLMConfig | None = None,
+              registry: Registry = DEFAULT_REGISTRY,
+              on_usage: UsageCallback | None = None) -> SummaryBase:
+    """provider: "auto" runs locally if the transcript fits the local model, else DeepSeek.
+    summary_type: a registry type, or "auto" to detect it with a short extra request.
+    on_usage is called with the tokens of every model request."""
+    config = config or LLMConfig.from_env()
+    provider = resolve_provider(transcript, provider, config, registry)
+    if summary_type == "auto":
+        summary_type = classify(transcript, provider, model, config=config, registry=registry,
+                                on_usage=on_usage)
+        print(f"Тип записи: {registry.get(summary_type).label}", file=sys.stderr)
+    messages = _messages(transcript, summary_type, registry)
+    schema = registry.get(summary_type).model.model_json_schema()
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
-        raw = chat(messages, model)
+        raw = _chat(provider, "summary", on_usage, messages, model, schema, config)
         try:
-            return _parse(raw)
+            result = _parse(raw, summary_type, registry)
         except ValidationError as e:
             error = str(e)[:2000]
             if attempt == MAX_ATTEMPTS:
@@ -184,13 +357,22 @@ def summarize(transcript: str, provider: str = "auto", model: str | None = None)
                 {"role": "user", "content": "Ответ не прошёл проверку по JSON-схеме:\n"
                                             f"{error}\n\nВерни исправленный JSON целиком."},
             ]
+            continue
+        if sanitize := registry.get(summary_type).sanitize:
+            result, removed = sanitize(result)
+            if removed:
+                print(f"Удалено фрагментов с личными данными: {removed}", file=sys.stderr)
+        return result
     raise AssertionError("unreachable")
 
 
-def save_summary(summary: MeetingSummary, transcript: str, md_path: Path) -> None:
-    """Write <name>.summary.md and <name>.summary.json side by side."""
-    md_path.write_text(render_markdown(summary, transcript_duration(transcript)),
-                       encoding="utf-8")
+def save_summary(summary: SummaryBase, transcript: str, md_path: Path, docx: bool = True,
+                 registry: Registry = DEFAULT_REGISTRY) -> None:
+    """Write <name>.summary.md, .json and (unless docx=False) .docx side by side."""
+    md = registry.render_markdown(summary, transcript_duration(transcript))
+    md_path.write_text(md, encoding="utf-8")
+    if docx:
+        save_docx(md, md_path.with_suffix(".docx"))
     md_path.with_suffix(".json").write_text(
         summary.model_dump_json(indent=2) + "\n", encoding="utf-8")
 
@@ -204,6 +386,10 @@ def main():
                              "deepseek (API) или ollama (локальная модель)")
     parser.add_argument("--model", help=f"модель для -p deepseek/ollama (по умолчанию "
                                          f"{DEEPSEEK_DEFAULT_MODEL} / {OLLAMA_DEFAULT_MODEL})")
+    parser.add_argument("-t", "--type", choices=SUMMARY_TYPES, default="auto", dest="summary_type",
+                        help="тип записи: "
+                             + ", ".join(f"{t.id} — {t.label}" for t in TYPES.values())
+                             + "; auto — определить по расшифровке")
     args = parser.parse_args()
     if args.model and args.provider == "auto":
         parser.error("--model задаётся вместе с -p deepseek или -p ollama "
@@ -213,8 +399,9 @@ def main():
     out_path = Path(args.output) if args.output else src.with_suffix(".summary.md")
     transcript = src.read_text(encoding="utf-8")
     print(f"Генерация summary ({args.provider})...", file=sys.stderr)
-    save_summary(summarize(transcript, args.provider, args.model), transcript, out_path)
-    print(f"Summary: {out_path} (+ {out_path.with_suffix('.json').name})", file=sys.stderr)
+    save_summary(summarize(transcript, args.provider, args.model, args.summary_type),
+                 transcript, out_path)
+    print(f"Summary: {out_path} (+ .json, .docx)", file=sys.stderr)
 
 
 if __name__ == "__main__":
