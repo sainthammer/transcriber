@@ -67,6 +67,12 @@ export function NewJobDialog({ file, config, onClose, onPickAnother, onCreated }
 
   const start = async () => {
     if (!file || !config) return
+    // Checked here too: the server rejects by Content-Length before reading the body, and
+    // browsers often report that as a dropped connection rather than the 413.
+    if (file.size > config.max_upload_bytes) {
+      setError(`Файл больше ${Math.floor(config.max_upload_bytes / 1024 ** 3)} ГБ`)
+      return
+    }
     const options = {
       provider: effectiveProvider ?? 'auto',
       summary: summaryOn,

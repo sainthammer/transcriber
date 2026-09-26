@@ -50,7 +50,7 @@ class FakePipeline:
         return "ollama" if provider == "auto" else provider
 
     def summarize(self, transcript, provider, summary_type, *, config, registry, on_usage,
-                  instructions=None):
+                  instructions=None, should_stop=None):
         self.summarized_with.append((provider, summary_type))
         self.instructions.append(instructions)
         self.configs.append(config)
@@ -175,6 +175,50 @@ def test_login_throttled_after_repeated_failures(make_client):
     assert resp.status_code == 429
 
 
+def test_login_throttled_per_ip_across_emails(monkeypatch):
+    from transcriber.server.security import LoginThrottle
+    throttle = LoginThrottle()
+    monkeypatch.setattr(throttle, "MAX_IP_FAILURES", 3)
+    for i in range(3):
+        assert throttle.retry_after(f"u{i}@example.com", "1.2.3.4") is None
+        throttle.failed(f"u{i}@example.com", "1.2.3.4")
+    assert throttle.retry_after("new@example.com", "1.2.3.4")
+    assert throttle.retry_after("new@example.com", "5.6.7.8") is None
+
+
+def test_unknown_email_still_checks_a_hash(monkeypatch):
+    from transcriber.server import security
+    calls = []
+
+    class Spy:
+        def hash(self, password):
+            return real.hash(password)
+
+        def verify(self, password_hash, password):
+            calls.append(password_hash)
+            return real.verify(password_hash, password)
+
+    real = security._hasher
+    monkeypatch.setattr(security, "_hasher", Spy())
+    assert security.verify_password(None, "whatever") is False
+    assert len(calls) == 1
+
+
+def test_login_removes_expired_sessions(make_client):
+    from datetime import timedelta
+
+    from transcriber.server.db import UserSession, utcnow
+    client = make_client()
+    sessions = client.app.state.sessions
+    with sessions.begin() as db:
+        user_id = db.scalar(select(UserSession.user_id))
+        db.add(UserSession(token_hash="0" * 64, user_id=user_id,
+                           expires_at=utcnow() - timedelta(days=1)))
+    sign_in(client, *ADMIN)
+    with sessions() as db:
+        assert db.get(UserSession, "0" * 64) is None
+
+
 def test_change_password(make_client):
     client = make_client()
     other_device = as_user(client, ADMIN)
@@ -267,6 +311,18 @@ def test_rejects_unreadable_file(make_client, tmp_path):
     assert resp.status_code == 415
     assert resp.json()["detail"].startswith("Не удалось прочитать файл")
     assert not any((tmp_path / "jobs").iterdir())
+
+
+def test_upload_size_limit(make_client, monkeypatch, tmp_path):
+    from transcriber.server import jobs
+    monkeypatch.setattr(jobs, "MAX_UPLOAD_BYTES", 4)
+    client = make_client()
+    resp = client.post("/api/jobs", files={"file": ("big.wav", b"RIFF....", "audio/wav")},
+                       data={"provider": "auto", "summary": "true"})
+    assert resp.status_code == 413
+    assert not any((tmp_path / "jobs").iterdir())
+    # The form checks the size before uploading.
+    assert client.get("/api/config").json()["max_upload_bytes"] == 2 * 1024**3
 
 
 def test_unknown_provider_or_type_rejected(make_client):

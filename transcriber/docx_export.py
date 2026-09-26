@@ -198,7 +198,8 @@ def _add_table(doc, rows: list[str]) -> None:
     # Quick Look read it) and to every cell (Word reads those).
     table.autofit = False
     shares = COLUMN_SHARES.get(len(header), [1 / len(header)] * len(header))
-    for grid_col, column, share in zip(table._tbl.tblGrid.gridCol_lst, table.columns, shares):
+    for grid_col, column, share in zip(table._tbl.tblGrid.gridCol_lst, table.columns, shares,
+                                       strict=False):
         grid_col.w = int(CONTENT_WIDTH * share)
         for cell in column.cells:
             cell.width = int(CONTENT_WIDTH * share)

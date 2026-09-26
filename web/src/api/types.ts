@@ -46,6 +46,7 @@ export interface Config {
     summary: boolean
     summary_type: SummaryTypeChoice
   }
+  max_upload_bytes: number
 }
 
 export interface JobListItem {

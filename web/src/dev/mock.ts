@@ -344,6 +344,7 @@ const configs: Record<'ok' | 'none', Config> = {
       summary: true,
       summary_type: 'auto',
     },
+    max_upload_bytes: 2 * 1024 ** 3,
   },
   none: {} as Config,
 }

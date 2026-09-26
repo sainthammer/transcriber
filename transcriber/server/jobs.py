@@ -1,4 +1,4 @@
-"""Recordings: the processing pipeline, the job queue and its persistence."""
+"""Recordings: the processing pipeline, the job queues and their persistence."""
 
 import json
 import logging
@@ -24,10 +24,15 @@ from ..summary_types import Registry, SummaryBase
 from .db import JobRecord, SummaryVersion, UsageRecord, iso
 
 STAGES = ("transcribing", "summarizing")
+# Two queues, one worker each: transcription is CPU-bound, a summary mostly waits on the
+# network, so regenerating a summary doesn't wait behind someone's hour-long recording.
+QUEUES = ("transcribe", "summary")
 # Formats every major browser can play; anything else gets an AAC copy for the player.
 BROWSER_AUDIO = {".mp3", ".m4a", ".aac", ".wav"}
 PLAYBACK_FILE = "audio.m4a"
 WHISPER_MODEL_NAME = "whisper-large-v3-turbo"
+# ~3 hours of WAV or a long video; the model handles any length, the disk is the limit.
+MAX_UPLOAD_BYTES = 2 * 1024**3
 # Summary versions kept per job: enough to compare a few regenerations with wishes,
 # while a job's rows stay small (a summary is a few KB of JSON).
 SUMMARY_VERSIONS_LIMIT = 20
@@ -38,6 +43,19 @@ log = logging.getLogger(__name__)
 
 class Cancelled(Exception):
     pass
+
+
+class UploadTooLarge(ValueError):
+    pass
+
+
+def _copy_limited(src, dst, limit: int) -> None:
+    copied = 0
+    while chunk := src.read(1024 * 1024):
+        copied += len(chunk)
+        if copied > limit:
+            raise UploadTooLarge(f"Файл больше {limit // 1024**3} ГБ")
+        dst.write(chunk)
 
 
 class Pipeline:
@@ -61,10 +79,10 @@ class Pipeline:
 
     def summarize(self, transcript: str, provider: str, summary_type: str, *,
                   config: LLMConfig, registry: Registry, on_usage,
-                  instructions: str | None = None) -> SummaryBase:
+                  instructions: str | None = None, should_stop=None) -> SummaryBase:
         return summary_mod.summarize(transcript, provider, summary_type=summary_type,
                                      config=config, registry=registry, on_usage=on_usage,
-                                     instructions=instructions)
+                                     instructions=instructions, should_stop=should_stop)
 
     def provider_status(self, config: LLMConfig) -> dict:
         return summary_mod.provider_status(config)
@@ -105,6 +123,8 @@ class Job:
     def progress_pct(self) -> int:
         if self.status == "done":
             return 100
+        if self.status == "queued" and self.stages["transcribing"]["status"] == "done":
+            return 95  # transcribed, waiting in the summary queue
         if self.status != "running" or self.stage is None:
             return 0
         lo, hi = {"transcribing": (0, 95), "summarizing": (95, 100)}[self.stage]
@@ -130,7 +150,7 @@ class Job:
 
 
 class JobManager:
-    """Jobs of all users; one worker processes them in order.
+    """Jobs of all users; a worker per queue (QUEUES) processes them in order.
 
     `settings` provides LLMConfig and the recognition language, `types` the summary type
     Registry — both read at processing time, so admin changes apply to the next job.
@@ -143,8 +163,11 @@ class JobManager:
         self.settings = settings
         self.types = types
         self.jobs: dict[str, Job] = {}
-        self.queue: list[tuple[str, str]] = []  # (job_id, "full" | "summary")
+        self.queues: dict[str, list[str]] = {q: [] for q in QUEUES}  # job ids
         self.cond = threading.Condition()
+        # Bumped on every change a job listing can show; /api/events rebuilds its snapshot
+        # only when it moves. A plain int: a stale read just delays an update by one tick.
+        self.revision = 0
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
         self._load()
 
@@ -154,6 +177,7 @@ class JobManager:
         return self.jobs_dir / job.id
 
     def _save(self, job: Job) -> None:
+        self.revision += 1
         if job.cancelled:
             return
         with self.sessions.begin() as db:
@@ -175,7 +199,7 @@ class JobManager:
             self._ensure_version(job)
             self.jobs[job.id] = job
             if job.status == "queued":
-                self.queue.append((job.id, "summary" if job.transcript else "full"))
+                self.queues["summary" if job.transcript else "transcribe"].append(job.id)
             self._ensure_playback(job)
 
     def import_legacy(self, owner_id: int) -> int:
@@ -228,6 +252,7 @@ class JobManager:
                 db.execute(delete(SummaryVersion).where(SummaryVersion.id.in_(stale)))
             job.summary_version_id = version.id
             db.merge(JobRecord(**job.to_record_values()))
+        self.revision += 1
 
     def _record_usage(self, job: Job, **values) -> None:
         with self.sessions.begin() as db:
@@ -244,8 +269,12 @@ class JobManager:
         job_dir = self.jobs_dir / job_id
         job_dir.mkdir(parents=True)
         source = f"source{suffix}"
-        with open(job_dir / source, "wb") as f:
-            shutil.copyfileobj(fileobj, f)
+        try:
+            with open(job_dir / source, "wb") as f:
+                _copy_limited(fileobj, f, MAX_UPLOAD_BYTES)
+        except UploadTooLarge:
+            shutil.rmtree(job_dir, ignore_errors=True)
+            raise
 
         duration = self.pipeline.duration(str(job_dir / source))
         if duration is None:
@@ -259,8 +288,9 @@ class JobManager:
         self._save(job)
         with self.cond:
             self.jobs[job.id] = job
-            self.queue.append((job.id, "full"))
-            self.cond.notify()
+            self.queues["transcribe"].append(job.id)
+            self.cond.notify_all()
+            self.revision += 1  # queue positions
         self._ensure_playback(job)
         return job
 
@@ -280,8 +310,9 @@ class JobManager:
                            "instructions": summary_mod.normalize_instructions(instructions)}
             job.stages["summarizing"] = _stages()["summarizing"]
             self._save(job)
-            self.queue.append((job.id, "summary"))
-            self.cond.notify()
+            self.queues["summary"].append(job.id)
+            self.cond.notify_all()
+            self.revision += 1  # queue positions
 
     def restore_version(self, job: Job, version_id: int) -> None:
         """Make a stored version current again: summary, provider and summary.md/.json.
@@ -314,7 +345,10 @@ class JobManager:
     def delete(self, job_id: str) -> None:
         with self.cond:
             job = self.jobs.pop(job_id)
-            self.queue = [(j, k) for j, k in self.queue if j != job_id]
+            self.revision += 1
+            for queue in self.queues.values():
+                if job_id in queue:
+                    queue.remove(job_id)
             running = job.status == "running"
             job.cancelled = True
         with self.sessions.begin() as db:
@@ -326,8 +360,10 @@ class JobManager:
             shutil.rmtree(self.dir(job), ignore_errors=True)
 
     def queue_position(self, job: Job) -> int | None:
-        ids = [j for j, _ in self.queue]
-        return ids.index(job.id) + 1 if job.id in ids else None
+        for queue in self.queues.values():
+            if job.id in queue:
+                return queue.index(job.id) + 1
+        return None
 
     def playback_path(self, job: Job) -> Path | None:
         converted = self.dir(job) / PLAYBACK_FILE
@@ -382,16 +418,19 @@ class JobManager:
     # --- worker ---
 
     def start(self) -> None:
-        threading.Thread(target=self._worker, name="jobs-worker", daemon=True).start()
+        for kind in QUEUES:
+            threading.Thread(target=self._worker, args=(kind,), name=f"jobs-{kind}",
+                             daemon=True).start()
 
-    def _worker(self) -> None:
+    def _worker(self, kind: str) -> None:
+        queue = self.queues[kind]
         while True:
             with self.cond:
-                while not self.queue:
+                while not queue:
                     self.cond.wait()
-                job_id, kind = self.queue.pop(0)
-                job = self.jobs[job_id]
+                job = self.jobs[queue.pop(0)]
                 job.status = "running"
+                self.revision += 1  # queue positions moved
             # Tags the model logs of this thread with the job id until the job ends.
             token = log_job_id.set(job.id)
             started = time.monotonic()
@@ -401,15 +440,24 @@ class JobManager:
                      {k: job.options.get(k) for k in ("provider", "summary_type", "summary")},
                      len(job.options.get("instructions") or ""))
             try:
-                if kind == "full":
-                    self._run_full(job)
+                if kind == "transcribe":
+                    self._run_transcribe(job)
                 else:
                     self._run_summary(job)
                 if job.cancelled:
                     raise Cancelled
-                job.status, job.stage = "done", None
-                log.info("job done: elapsed=%.1fs summary=%s", time.monotonic() - started,
-                         "error" if job.summary_error else bool(job.summary))
+                if kind == "transcribe" and job.options["summary"]:
+                    with self.cond:  # on to the summary worker
+                        job.status, job.stage = "queued", None
+                        self.queues["summary"].append(job.id)
+                        self.cond.notify_all()
+                        self.revision += 1  # queue positions
+                    log.info("job transcribed, queued for summary: elapsed=%.1fs",
+                             time.monotonic() - started)
+                else:
+                    job.status, job.stage = "done", None
+                    log.info("job done: elapsed=%.1fs summary=%s", time.monotonic() - started,
+                             "error" if job.summary_error else bool(job.summary))
             except Cancelled:
                 log.info("job cancelled: elapsed=%.1fs", time.monotonic() - started)
                 shutil.rmtree(self.dir(job), ignore_errors=True)
@@ -438,7 +486,7 @@ class JobManager:
         job.stages[stage].update(status=status, finished_at=_now())
         self._save(job)
 
-    def _run_full(self, job: Job) -> None:
+    def _run_transcribe(self, job: Job) -> None:
         job_dir = self.dir(job)
         self._begin(job, "transcribing")
         language = self.settings.whisper_language()
@@ -448,6 +496,7 @@ class JobManager:
                     raise Cancelled
                 if isinstance(item, float):
                     job.processed_sec = item
+                    self.revision += 1  # progress_pct
                 else:
                     start, text = item
                     job.transcript.append({"start_sec": round(start, 2), "text": text})
@@ -458,11 +507,6 @@ class JobManager:
             raise RuntimeError("В записи не найдено речи")
         self._finish(job, "transcribing")
         (job_dir / "transcript.txt").write_text(job.transcript_text(), encoding="utf-8")
-
-        if job.cancelled:
-            raise Cancelled
-        if job.options["summary"]:
-            self._run_summary(job)
 
     def _run_summary(self, job: Job) -> None:
         """Summary failures don't fail the job: the transcript is still the result."""
@@ -485,7 +529,8 @@ class JobManager:
             result = self.pipeline.summarize(text, job.provider_used,
                                              job.options.get("summary_type", "auto"),
                                              config=config, registry=registry, on_usage=on_usage,
-                                             instructions=instructions)
+                                             instructions=instructions,
+                                             should_stop=lambda: job.cancelled)
             if job.cancelled:
                 raise Cancelled
             summary_mod.save_summary(result, text, self.dir(job) / "summary.md", docx=False,
@@ -493,8 +538,8 @@ class JobManager:
             job.summary, job.summary_error = result.model_dump(), None
             self._add_version(job, job.provider_used, instructions)
             self._finish(job, "summarizing")
-        except Cancelled:
-            raise
+        except (Cancelled, summary_mod.SummaryCancelled):
+            raise Cancelled from None
         except Exception as e:  # noqa: BLE001
             log.warning("summary failed, transcript kept: error=%s", type(e).__name__)
             job.summary_error = str(e) or type(e).__name__
