@@ -251,6 +251,15 @@ Markdown. Общие правила — в `base.md` и `base.py`. Правил�
 Команды `transcribe`, `summarize`, `transcriber-web`, `transcriber-admin` и `download-model`
 объявлены в `[project.scripts]` в `pyproject.toml` и устанавливаются в `.venv` при `uv sync` (или первом `uv run`).
 
+Частые команды есть и в `Makefile`: `make` без цели печатает список.
+
+```bash
+make test                                              # тесты
+make transcribe FILE=recordings/record.mp3 ARGS="-p ollama"
+make web                                               # Postgres + API на :8000
+make rebuild                                           # пересобрать приложение в Docker после изменений
+```
+
 ## Тесты
 
 ```bash

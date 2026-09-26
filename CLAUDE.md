@@ -19,6 +19,8 @@ cd web && npm run dev | build | lint           # интерфейс (npm, lock �
 cd web && npm run screenshots                  # скриншоты Playwright в web/.screenshots/
 ```
 
+Те же команды короче — в `Makefile` (`make` — список). Добавляешь команду — добавь и цель.
+
 Полный прогон 35-минутной записи занимает пару минут на процессоре (int8, без Metal-ускорения —
 ctranslate2 его не поддерживает) и грузит ~2 ГБ модели. Для проверки изменений нарезай
 фрагмент: `ffmpeg -ss 60 -t 30 -i recordings/record.mp3 /tmp/clip.mp3`.
