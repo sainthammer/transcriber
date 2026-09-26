@@ -27,6 +27,7 @@ cp .env.example .env
 | `OLLAMA_HOST` | `http://localhost:11434` | адрес Ollama |
 | `OLLAMA_MODEL` | `qwen3.5:4b` | локальная модель |
 | `OLLAMA_MAX_CONTEXT` | `32768` | до скольки токенов считать локально в режиме `auto` |
+| `LOG_LEVEL` | CLI — выкл., сервер — `INFO` | журнал работы моделей (`DEBUG`, `INFO`, `WARNING`, `ERROR`), см. «Журнал работы моделей» |
 
 Для локального summary нужен запущенный [Ollama](https://ollama.com) со скачанной моделью (`ollama pull qwen3.5:4b`).
 
@@ -60,6 +61,21 @@ uv run summarize recordings/record.txt -t interview    # тип записи з�
 - `record.summary.md` — структурированное summary
 - `record.summary.json` — то же summary в JSON (для интеграций)
 - `record.summary.docx` — то же summary в Word: для отправки коллегам и печати
+
+### Журнал работы моделей
+
+Для разработчика: какая модель вызывалась, сколько символов и токенов ушло и пришло, сколько
+длился запрос, почему закончилась генерация, повторы после ошибки схемы; для Whisper — загрузка
+модели, язык, длительность аудио и скорость распознавания. Пишется в stderr в формате uvicorn
+(`INFO:     transcriber.summary: LLM done: ...`), в веб-интерфейсе — с id задачи (`[job <id>]`).
+
+```bash
+LOG_LEVEL=INFO uv run summarize recordings/record.txt -p ollama   # CLI: по умолчанию журнал выключен
+LOG_LEVEL=DEBUG uv run transcriber-web --no-browser               # сервер: по умолчанию INFO
+```
+
+В журнал попадают только метаданные и цифры — никогда текст расшифровок, промптов, ответов
+модели и summary, даже на `DEBUG`: записи — собеседования и one-to-one.
 
 ## Веб-интерфейс
 
@@ -238,6 +254,7 @@ Markdown. Общие правила — в `base.md` и `base.py`. Правил�
 | `transcriber/cli.py` | команда `transcribe`: распознавание faster-whisper (с пунктуацией) → summary |
 | `transcriber/summary.py` | команда `summarize`: запросы к DeepSeek и Ollama, выбор провайдера и типа |
 | `transcriber/summary_types/` | типы summary: общая схема и правила (`base.*`) и по паре файлов на тип |
+| `transcriber/log.py` | журнал работы моделей: `LOG_LEVEL`, формат uvicorn, id задачи сервера |
 | `transcriber/docx_export.py` | Word-версия summary: Markdown из `render_markdown` → стилизованный .docx |
 | `transcriber/server/` | команда `transcriber-web`: сервер веб-интерфейса — вход (`auth.py`), записи (`jobs.py`), админка (`admin.py`, `settings.py`, `types_store.py`), база (`db.py`, `migrations/`), описание API для Swagger (`api_docs.py`) |
 | `transcriber/server/manage.py` | команда `transcriber-admin`: пользователи из командной строки |

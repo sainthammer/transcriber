@@ -2,9 +2,11 @@
 
 import argparse
 import json
+import logging
 import os
 import re
 import sys
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,11 +14,12 @@ from typing import Literal
 
 import httpx
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import APIStatusError, OpenAI
 from pydantic import ValidationError, create_model
 from tqdm import tqdm
 
 from .docx_export import save_docx
+from .log import CLI_DEFAULT, setup_logging
 from .summary_types import DEFAULT_REGISTRY, TYPES, Registry, SummaryBase, transcript_duration
 
 PROVIDERS = ("auto", "deepseek", "ollama")
@@ -51,6 +54,10 @@ MAX_ATTEMPTS = 2
 # The type of a meeting is clear from its opening minutes; no need to send everything.
 CLASSIFY_CHARS = 8000
 
+# Logs carry metadata only (sizes, timings, tokens, error types) — never the transcript,
+# prompts or model replies. See transcriber/log.py.
+log = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class LLMConfig:
@@ -84,6 +91,8 @@ class Usage:
     kind: str  # "classify" | "summary"
     prompt_tokens: int
     completion_tokens: int
+    # Why generation stopped ("stop", ...), for logs only; None if not reported.
+    finish_reason: str | None = None
 
 
 UsageCallback = Callable[[Usage], None]
@@ -116,9 +125,19 @@ def _classify_messages(transcript: str, registry: Registry = DEFAULT_REGISTRY) -
     ]
 
 
+def _prompt_chars(messages: list[dict]) -> int:
+    return sum(len(m["content"]) for m in messages)
+
+
 def _estimate_tokens(messages: list[dict]) -> int:
     """Upper-bound estimate of prompt + response tokens for a local model."""
-    return sum(len(m["content"]) for m in messages) // CHARS_PER_TOKEN + MAX_OUTPUT_TOKENS
+    return _prompt_chars(messages) // CHARS_PER_TOKEN + MAX_OUTPUT_TOKENS
+
+
+def _ollama_num_ctx(messages: list[dict]) -> int:
+    # Ollama's default context window is small and silently truncates long prompts,
+    # so size it to the request (rounded up to a multiple of 4096).
+    return -(-_estimate_tokens(messages) // 4096) * 4096
 
 
 def _chat_deepseek(messages: list[dict], model: str | None, schema: dict,
@@ -141,7 +160,7 @@ def _chat_deepseek(messages: list[dict], model: str | None, schema: dict,
     if choice.finish_reason == "length":
         raise RuntimeError(f"ответ DeepSeek обрезан на {DEEPSEEK_MAX_TOKENS} токенах")
     usage = response.usage and Usage("deepseek", model, "", response.usage.prompt_tokens,
-                                     response.usage.completion_tokens)
+                                     response.usage.completion_tokens, choice.finish_reason)
     return choice.message.content or "", usage
 
 
@@ -206,9 +225,7 @@ def _chat_ollama(messages: list[dict], model: str | None, schema: dict,
                  config: LLMConfig) -> tuple[str, Usage | None]:
     host = _ollama_host(config)
     model = model or config.ollama_model
-    # Ollama's default context window is small and silently truncates long prompts,
-    # so size it to the request.
-    num_ctx = -(-_estimate_tokens(messages) // 4096) * 4096
+    num_ctx = _ollama_num_ctx(messages)
 
     payload = {
         "model": model,
@@ -235,10 +252,14 @@ def _chat_ollama(messages: list[dict], model: str | None, schema: dict,
                 parts.append(chunk.get("message", {}).get("content", ""))
                 bar.update(1)
                 if chunk.get("done"):
+                    # Ollama reports durations in nanoseconds; load > 0 means a cold start.
+                    log.debug("Ollama timings: load=%.1fs prompt_eval=%.1fs eval=%.1fs",
+                              *(chunk.get(k, 0) / 1e9 for k in
+                                ("load_duration", "prompt_eval_duration", "eval_duration")))
                     if chunk.get("done_reason") == "length":
                         raise RuntimeError(f"ответ обрезан на {MAX_OUTPUT_TOKENS} токенах")
                     usage = Usage("ollama", model, "", chunk.get("prompt_eval_count", 0),
-                                  chunk.get("eval_count", 0))
+                                  chunk.get("eval_count", 0), chunk.get("done_reason"))
     except httpx.ConnectError:
         raise RuntimeError(f"Ollama не отвечает на {host} (запустите `ollama serve`)") from None
     finally:
@@ -252,11 +273,16 @@ def _choose_provider(messages: list[dict], config: LLMConfig) -> str:
     try:
         limit = _ollama_context_limit(config)
     except RuntimeError as e:
+        log.warning("auto provider: deepseek (ollama unavailable: %s)",
+                    getattr(e, "reason", type(e).__name__))
         print(f"Локальная модель недоступна ({e}) → DeepSeek", file=sys.stderr)
         return "deepseek"
     if needed <= limit:
+        log.info("auto provider: ollama (est_tokens=%d <= limit=%d, model=%s)",
+                 needed, limit, model)
         print(f"~{needed} токенов ≤ {limit} → локально ({model})", file=sys.stderr)
         return "ollama"
+    log.info("auto provider: deepseek (est_tokens=%d > limit=%d of %s)", needed, limit, model)
     print(f"~{needed} токенов > {limit} (лимит {model}) → DeepSeek", file=sys.stderr)
     return "deepseek"
 
@@ -301,12 +327,52 @@ def _parse(raw: str, summary_type: str, registry: Registry = DEFAULT_REGISTRY) -
     return registry.get(summary_type).model.model_validate_json(_strip_fences(raw))
 
 
-def _chat(provider: str, kind: str, on_usage: UsageCallback | None, *args) -> str:
+def _error_brief(e: Exception) -> str:
+    """An error description safe for logs. API error bodies may echo the request, so
+    only their type and status go in; our own RuntimeErrors carry no content."""
+    if isinstance(e, APIStatusError):
+        return f"{type(e).__name__} (HTTP {e.status_code})"
+    if type(e) in (RuntimeError, OllamaUnavailable):
+        return f"{type(e).__name__}: {str(e)[:300]}"
+    return type(e).__name__
+
+
+def _validation_brief(e: ValidationError) -> str:
+    """Field paths and error types only: pydantic messages quote the offending input."""
+    errors = e.errors(include_url=False, include_context=False, include_input=False)
+    brief = "; ".join(f"{'.'.join(map(str, err['loc'])) or '<root>'}: {err['type']}"
+                      for err in errors[:5])
+    return f"{len(errors)} error(s): {brief}" + ("; ..." if len(errors) > 5 else "")
+
+
+def _chat(provider: str, kind: str, on_usage: UsageCallback | None, messages: list[dict],
+          model: str | None, schema: dict, config: LLMConfig, *, attempt: int = 1) -> str:
     chat = _chat_ollama if provider == "ollama" else _chat_deepseek
-    raw, usage = chat(*args)
-    if usage and on_usage:
-        on_usage(Usage(usage.provider, usage.model, kind, usage.prompt_tokens,
-                       usage.completion_tokens))
+    model_name = model or (config.ollama_model if provider == "ollama" else config.deepseek_model)
+    chars = _prompt_chars(messages)
+    extra = f" num_ctx={_ollama_num_ctx(messages)}" if provider == "ollama" else ""
+    log.info("LLM request: provider=%s model=%s kind=%s attempt=%d prompt_chars=%d "
+             "est_prompt_tokens=%d%s", provider, model_name, kind, attempt, chars,
+             chars // CHARS_PER_TOKEN, extra)
+    started = time.monotonic()
+    try:
+        raw, usage = chat(messages, model, schema, config)
+    except Exception as e:
+        log.warning("LLM request failed: provider=%s kind=%s attempt=%d elapsed=%.1fs: %s",
+                    provider, kind, attempt, time.monotonic() - started, _error_brief(e))
+        raise
+    elapsed = time.monotonic() - started
+    if usage:
+        log.info("LLM done: provider=%s kind=%s attempt=%d elapsed=%.1fs prompt_tokens=%d "
+                 "completion_tokens=%d finish=%s reply_chars=%d", provider, kind, attempt,
+                 elapsed, usage.prompt_tokens, usage.completion_tokens, usage.finish_reason,
+                 len(raw))
+        if on_usage:
+            on_usage(Usage(usage.provider, usage.model, kind, usage.prompt_tokens,
+                           usage.completion_tokens, usage.finish_reason))
+    else:
+        log.info("LLM done: provider=%s kind=%s attempt=%d elapsed=%.1fs reply_chars=%d "
+                 "(no usage reported)", provider, kind, attempt, elapsed, len(raw))
     return raw
 
 
@@ -319,12 +385,16 @@ def classify(transcript: str, provider: str, model: str | None = None, *,
     raw = _chat(provider, "classify", on_usage, _classify_messages(transcript, registry), model,
                 classification.model_json_schema(), config)
     try:
-        return classification.model_validate_json(_strip_fences(raw)).meeting_type
-    except ValidationError:
+        meeting_type = classification.model_validate_json(_strip_fences(raw)).meeting_type
+    except ValidationError as e:
         fallback = registry.fallback
+        log.warning("classify: invalid answer (%s), fallback type=%s", _validation_brief(e),
+                    fallback)
         print(f"Не удалось определить тип записи, используем «{registry.get(fallback).label}»",
               file=sys.stderr)
         return fallback
+    log.info("classify: type=%s", meeting_type)
+    return meeting_type
 
 
 def summarize(transcript: str, provider: str = "auto", model: str | None = None,
@@ -344,13 +414,18 @@ def summarize(transcript: str, provider: str = "auto", model: str | None = None,
     schema = registry.get(summary_type).model.model_json_schema()
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
-        raw = _chat(provider, "summary", on_usage, messages, model, schema, config)
+        raw = _chat(provider, "summary", on_usage, messages, model, schema, config,
+                    attempt=attempt)
         try:
             result = _parse(raw, summary_type, registry)
         except ValidationError as e:
             error = str(e)[:2000]
             if attempt == MAX_ATTEMPTS:
+                log.error("summary: reply failed schema validation, giving up after %d "
+                          "attempts (type=%s, %s)", attempt, summary_type, _validation_brief(e))
                 raise RuntimeError(f"ответ модели не соответствует схеме:\n{error}") from None
+            log.warning("summary: reply failed schema validation, retrying (attempt %d/%d, "
+                        "type=%s, %s)", attempt, MAX_ATTEMPTS, summary_type, _validation_brief(e))
             print("Ответ не прошёл проверку, повторная попытка...", file=sys.stderr)
             messages = messages + [
                 {"role": "assistant", "content": raw},
@@ -361,6 +436,8 @@ def summarize(transcript: str, provider: str = "auto", model: str | None = None,
         if sanitize := registry.get(summary_type).sanitize:
             result, removed = sanitize(result)
             if removed:
+                log.info("sanitize: removed %d fragment(s) with personal data (type=%s)",
+                         removed, summary_type)
                 print(f"Удалено фрагментов с личными данными: {removed}", file=sys.stderr)
         return result
     raise AssertionError("unreachable")
@@ -391,6 +468,7 @@ def main():
                              + ", ".join(f"{t.id} — {t.label}" for t in TYPES.values())
                              + "; auto — определить по расшифровке")
     args = parser.parse_args()
+    setup_logging(CLI_DEFAULT)
     if args.model and args.provider == "auto":
         parser.error("--model задаётся вместе с -p deepseek или -p ollama "
                      "(для auto используйте DEEPSEEK_MODEL / OLLAMA_MODEL в .env)")

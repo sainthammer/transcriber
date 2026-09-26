@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 import subprocess
 import sys
@@ -9,6 +10,7 @@ from dotenv import load_dotenv
 from faster_whisper import WhisperModel
 from tqdm import tqdm
 
+from .log import CLI_DEFAULT, setup_logging
 from .summary_types import TYPES
 
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
@@ -17,6 +19,9 @@ DEFAULT_MODEL_DIR = "faster-whisper-large-v3-turbo"
 # sensible device on a Mac; int8 is noticeably faster than float32 with little quality
 # loss for this model size.
 DEVICE, COMPUTE_TYPE = "cpu", "int8"
+
+# Metadata only (timings, sizes, language) — never the recognized text. See log.py.
+log = logging.getLogger(__name__)
 
 
 def fmt_time(seconds: float) -> str:
@@ -52,6 +57,20 @@ def default_language() -> str | None:
     return None if lang == "auto" else lang
 
 
+def load_model(path: str) -> WhisperModel:
+    """Load a Whisper model (a couple of seconds, ~2 GB of memory for large-v3-turbo)."""
+    started = time.monotonic()
+    try:
+        model = WhisperModel(path, device=DEVICE, compute_type=COMPUTE_TYPE)
+    except Exception as e:
+        log.error("Whisper model failed to load: path=%s: %s: %s", path, type(e).__name__,
+                  str(e)[:300])
+        raise
+    log.info("Whisper model loaded: path=%s device=%s compute_type=%s elapsed=%.1fs",
+             path, DEVICE, COMPUTE_TYPE, time.monotonic() - started)
+    return model
+
+
 def transcribe(audio_path: str, model: str | WhisperModel, language: str | None = "ru"):
     """Yield (start_seconds, text) for each recognized phrase, interleaved with
     processed seconds of audio (float) for progress reporting.
@@ -62,17 +81,34 @@ def transcribe(audio_path: str, model: str | WhisperModel, language: str | None 
     skipped via Silero VAD (`vad_filter`) rather than sent to the model.
     """
     if isinstance(model, str):
-        model = WhisperModel(model, device=DEVICE, compute_type=COMPUTE_TYPE)
+        model = load_model(model)
 
+    started, phrases, audio_sec, processed, outcome = time.monotonic(), 0, 0.0, 0.0, "stopped"
     try:
-        segments, _ = model.transcribe(audio_path, language=language, vad_filter=True)
+        # Lazy: VAD and language detection run here, decoding runs while iterating.
+        segments, info = model.transcribe(audio_path, language=language, vad_filter=True)
+        audio_sec = info.duration
+        log.info("Whisper: language=%s (%s, p=%.2f) audio=%.1fs speech_after_vad=%.1fs",
+                 info.language, "given" if language else "detected",
+                 info.language_probability, info.duration, info.duration_after_vad)
         for segment in segments:
             text = segment.text.strip()
             if text:
+                phrases += 1
                 yield segment.start, text
+            processed = segment.end
             yield segment.end
+        outcome, processed = "done", audio_sec
     except Exception as e:  # noqa: BLE001 — e.g. ffmpeg couldn't decode the file
+        outcome = "failed"
+        log.error("Whisper transcription failed: %s: %s", type(e).__name__, str(e)[:300])
         raise RuntimeError(f"Не удалось распознать файл: {e}") from e
+    finally:
+        # "stopped": the caller closed the generator early (a cancelled server job).
+        if outcome != "failed":
+            elapsed = time.monotonic() - started
+            log.info("Whisper %s: phrases=%d audio=%.1fs elapsed=%.1fs speed=%.1fx realtime",
+                     outcome, phrases, processed, elapsed, processed / elapsed if elapsed else 0)
 
 
 def main():
@@ -94,6 +130,7 @@ def main():
                         choices=("auto", *TYPES),
                         help="тип записи для summary; auto — определить по расшифровке")
     args = parser.parse_args()
+    setup_logging(CLI_DEFAULT)
 
     args.model = args.model or default_model()
     language = default_language() if args.language is None else \

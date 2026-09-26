@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from ..docx_export import markdown_to_docx
+from ..log import SERVER_DEFAULT, setup_logging
 from ..summary import PROVIDERS
 from ..summary_types import strip_empty_sections, transcript_duration
 from . import admin, api_docs, auth
@@ -353,6 +354,7 @@ def main():
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--no-browser", action="store_true", help="не открывать браузер")
     args = parser.parse_args()
+    setup_logging(SERVER_DEFAULT)
 
     try:
         app = create_app()
