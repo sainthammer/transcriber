@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import sys
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -14,7 +15,7 @@ from typing import Literal
 
 import httpx
 from dotenv import load_dotenv
-from openai import APIStatusError, OpenAI
+from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI, Timeout
 from pydantic import ValidationError, create_model
 from tqdm import tqdm
 
@@ -30,6 +31,13 @@ DEEPSEEK_DEFAULT_MODEL = "deepseek-flash"
 # Thinking mode is on by default and reasoning tokens count against max_tokens
 # (~3k on a 35-minute meeting), so leave plenty of room for the JSON itself.
 DEEPSEEK_MAX_TOKENS = 32768
+# The reply is not streamed, but DeepSeek keeps the connection alive with blank lines while
+# it thinks, so the read timeout only fires if the API goes silent. 10 minutes covers
+# ~3k reasoning + 8k output tokens with a wide margin. One SDK retry (not the default two)
+# still absorbs a transient 429/5xx or a dropped connection, while capping a hung request
+# at ~20 minutes instead of ~30 for the single server worker.
+DEEPSEEK_TIMEOUT = Timeout(600, connect=10)
+DEEPSEEK_MAX_RETRIES = 1
 
 OLLAMA_DEFAULT_HOST = "http://localhost:11434"
 OLLAMA_DEFAULT_MODEL = "qwen3.5:4b"
@@ -46,6 +54,18 @@ CHARS_PER_TOKEN = 3
 # names from misrecognized words, at 0.3 it didn't.
 OLLAMA_SAMPLING = {"temperature": 0.3, "top_p": 0.8, "top_k": 20,
                    "repeat_penalty": 1.1, "repeat_last_n": 256}
+# Ollama is local: if it doesn't accept a connection in 5 s, it isn't running.
+OLLAMA_CONNECT_TIMEOUT = 5
+# Longest silence between stream chunks. The first chunk only comes after the model is
+# loaded (a cold start of a 4B model from disk: ~5-30 s) and the whole prompt is evaluated
+# (up to OLLAMA_MAX_CONTEXT=32k tokens: tens of seconds on Metal, several minutes on CPU,
+# e.g. Ollama in Docker without GPU). After that tokens arrive every fraction of a second.
+# 5 minutes is well above the slow first-chunk case and still frees the worker from a hung
+# Ollama.
+OLLAMA_READ_TIMEOUT = 300
+# provider_status() is called on every form open; a hung Ollama would stall each one for
+# the /api/show timeout. Admin setting changes produce a new (host, model) key right away.
+OLLAMA_STATUS_TTL = 30
 
 MAX_OUTPUT_TOKENS = 8192
 DEEPSEEK_TEMPERATURE = 0.3
@@ -96,6 +116,23 @@ class Usage:
 
 
 UsageCallback = Callable[[Usage], None]
+StopCallback = Callable[[], bool]
+
+
+class SummaryCancelled(Exception):
+    """should_stop() returned True: the summary was abandoned on request.
+
+    Not a RuntimeError on purpose: callers treat RuntimeError as a failure to report."""
+
+
+class LLMTimeout(RuntimeError):
+    """The model API didn't answer in time. A subclass so that _error_brief logs only
+    the type name."""
+
+
+def _check_stop(should_stop: StopCallback | None) -> None:
+    if should_stop is not None and should_stop():
+        raise SummaryCancelled("summary cancelled")
 
 
 def _instructions_block(instructions: str) -> str:
@@ -165,15 +202,22 @@ def _chat_deepseek(messages: list[dict], model: str | None, schema: dict,
         raise RuntimeError("не задан ключ DeepSeek API (DEEPSEEK_API_KEY)")
 
     model = model or config.deepseek_model
-    client = OpenAI(api_key=config.deepseek_api_key, base_url=DEEPSEEK_BASE_URL, timeout=600)
-    response = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        # JSON mode doesn't take a schema; it's already spelled out in the system prompt.
-        response_format={"type": "json_object"},
-        max_tokens=DEEPSEEK_MAX_TOKENS,
-        temperature=DEEPSEEK_TEMPERATURE,
-    )
+    client = OpenAI(api_key=config.deepseek_api_key, base_url=DEEPSEEK_BASE_URL,
+                    timeout=DEEPSEEK_TIMEOUT, max_retries=DEEPSEEK_MAX_RETRIES)
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            # JSON mode doesn't take a schema; it's already spelled out in the system prompt.
+            response_format={"type": "json_object"},
+            max_tokens=DEEPSEEK_MAX_TOKENS,
+            temperature=DEEPSEEK_TEMPERATURE,
+        )
+    except APITimeoutError:
+        raise LLMTimeout(f"DeepSeek не ответил за {DEEPSEEK_TIMEOUT.read:.0f} с "
+                         f"(попыток: {DEEPSEEK_MAX_RETRIES + 1})") from None
+    except APIConnectionError:
+        raise RuntimeError("не удалось подключиться к DeepSeek API") from None
     choice = response.choices[0]
     if choice.finish_reason == "length":
         raise RuntimeError(f"ответ DeepSeek обрезан на {DEEPSEEK_MAX_TOKENS} токенах")
@@ -189,8 +233,10 @@ def _ollama_host(config: LLMConfig) -> str:
 
 def _ollama_client() -> httpx.Client:
     # trust_env=False: httpx picks up macOS system proxy settings and would route
-    # even localhost through them.
-    return httpx.Client(trust_env=False, timeout=None)
+    # even localhost through them. Short requests (/api/show, /api/tags) pass their own
+    # timeout; this default is for the /api/chat stream.
+    return httpx.Client(trust_env=False,
+                        timeout=httpx.Timeout(OLLAMA_READ_TIMEOUT, connect=OLLAMA_CONNECT_TIMEOUT))
 
 
 class OllamaUnavailable(RuntimeError):
@@ -240,7 +286,11 @@ def check_deepseek(config: LLMConfig) -> str:
 
 
 def _chat_ollama(messages: list[dict], model: str | None, schema: dict,
-                 config: LLMConfig) -> tuple[str, Usage | None]:
+                 config: LLMConfig, *,
+                 should_stop: StopCallback | None = None) -> tuple[str, Usage | None]:
+    """should_stop is polled per chunk; on True the stream is closed (Ollama then stops
+    generating) and SummaryCancelled is raised. It can't interrupt the wait for the first
+    chunk (model load and prompt eval)."""
     host = _ollama_host(config)
     model = model or config.ollama_model
     num_ctx = _ollama_num_ctx(messages)
@@ -264,6 +314,8 @@ def _chat_ollama(messages: list[dict], model: str | None, schema: dict,
             if resp.status_code != 200:
                 raise RuntimeError(f"Ollama: HTTP {resp.status_code}: {resp.read().decode()}")
             for line in resp.iter_lines():
+                # Leaving the `with` closes the stream, so Ollama drops the request.
+                _check_stop(should_stop)
                 chunk = json.loads(line)
                 if "error" in chunk:
                     raise RuntimeError(f"Ollama: {chunk['error']}")
@@ -278,8 +330,12 @@ def _chat_ollama(messages: list[dict], model: str | None, schema: dict,
                         raise RuntimeError(f"ответ обрезан на {MAX_OUTPUT_TOKENS} токенах")
                     usage = Usage("ollama", model, "", chunk.get("prompt_eval_count", 0),
                                   chunk.get("eval_count", 0), chunk.get("done_reason"))
-    except httpx.ConnectError:
+    except (httpx.ConnectError, httpx.ConnectTimeout):
         raise RuntimeError(f"Ollama не отвечает на {host} (запустите `ollama serve`)") from None
+    except httpx.TimeoutException as e:
+        log.warning("Ollama timeout: %s", type(e).__name__)
+        raise LLMTimeout(f"Ollama не присылала ответ дольше {OLLAMA_READ_TIMEOUT} с "
+                         f"(модель {model} зависла или слишком медленная)") from None
     finally:
         client.close()
     return "".join(parts), usage
@@ -305,14 +361,37 @@ def _choose_provider(messages: list[dict], config: LLMConfig) -> str:
     return "deepseek"
 
 
-def provider_status(config: LLMConfig | None = None) -> dict:
-    """Availability of each provider with a machine-readable reason, for UIs."""
-    config = config or LLMConfig.from_env()
+# (host, model) -> (monotonic time of the check, reason or None if available).
+_ollama_status_cache: dict[tuple[str, str], tuple[float, str | None]] = {}
+_ollama_status_lock = threading.Lock()
+
+
+def _ollama_status(config: LLMConfig) -> str | None:
+    """Unavailability reason of Ollama (None if it's fine), cached for OLLAMA_STATUS_TTL.
+
+    The lock only guards the dict, not the request: concurrent misses may both check, which
+    is harmless, while one slow check doesn't block other keys."""
+    key = (_ollama_host(config), config.ollama_model)
+    now = time.monotonic()
+    with _ollama_status_lock:
+        cached = _ollama_status_cache.get(key)
+    if cached and now - cached[0] < OLLAMA_STATUS_TTL:
+        return cached[1]
     try:
         _ollama_context_limit(config)
-        ollama_reason = None
+        reason = None
     except OllamaUnavailable as e:
-        ollama_reason = e.reason
+        reason = e.reason
+    with _ollama_status_lock:
+        _ollama_status_cache[key] = (time.monotonic(), reason)
+    return reason
+
+
+def provider_status(config: LLMConfig | None = None) -> dict:
+    """Availability of each provider with a machine-readable reason, for UIs.
+    The Ollama check is cached for OLLAMA_STATUS_TTL seconds."""
+    config = config or LLMConfig.from_env()
+    ollama_reason = _ollama_status(config)
     return {
         "deepseek": {
             "available": bool(config.deepseek_api_key),
@@ -327,7 +406,9 @@ def provider_status(config: LLMConfig | None = None) -> dict:
 def resolve_provider(transcript: str, provider: str = "auto", config: LLMConfig | None = None,
                      registry: Registry = DEFAULT_REGISTRY,
                      instructions: str | None = None) -> str:
-    """Concrete provider for a request: "auto" picks by transcript size and availability."""
+    """Concrete provider for a request: "auto" picks by transcript size and availability.
+    Always asks Ollama afresh (no provider_status cache): a stale "available" would send a
+    job to a dead Ollama, and it's one request per job anyway."""
     if provider != "auto":
         return provider
     config = config or LLMConfig.from_env()
@@ -366,8 +447,13 @@ def _validation_brief(e: ValidationError) -> str:
 
 
 def _chat(provider: str, kind: str, on_usage: UsageCallback | None, messages: list[dict],
-          model: str | None, schema: dict, config: LLMConfig, *, attempt: int = 1) -> str:
+          model: str | None, schema: dict, config: LLMConfig, *, attempt: int = 1,
+          should_stop: StopCallback | None = None) -> str:
+    _check_stop(should_stop)
     chat = _chat_ollama if provider == "ollama" else _chat_deepseek
+    # DeepSeek isn't streamed, so it's only checked around the request. Passed only when
+    # set, so _chat_* stubs with the plain (messages, model, schema, config) signature work.
+    stop_kw = {"should_stop": should_stop} if provider == "ollama" and should_stop else {}
     model_name = model or (config.ollama_model if provider == "ollama" else config.deepseek_model)
     chars = _prompt_chars(messages)
     extra = f" num_ctx={_ollama_num_ctx(messages)}" if provider == "ollama" else ""
@@ -376,7 +462,11 @@ def _chat(provider: str, kind: str, on_usage: UsageCallback | None, messages: li
              chars // CHARS_PER_TOKEN, extra)
     started = time.monotonic()
     try:
-        raw, usage = chat(messages, model, schema, config)
+        raw, usage = chat(messages, model, schema, config, **stop_kw)
+    except SummaryCancelled:
+        log.info("LLM request cancelled: provider=%s kind=%s attempt=%d elapsed=%.1fs",
+                 provider, kind, attempt, time.monotonic() - started)
+        raise
     except Exception as e:
         log.warning("LLM request failed: provider=%s kind=%s attempt=%d elapsed=%.1fs: %s",
                     provider, kind, attempt, time.monotonic() - started, _error_brief(e))
@@ -398,12 +488,14 @@ def _chat(provider: str, kind: str, on_usage: UsageCallback | None, messages: li
 
 def classify(transcript: str, provider: str, model: str | None = None, *,
              config: LLMConfig | None = None, registry: Registry = DEFAULT_REGISTRY,
-             on_usage: UsageCallback | None = None) -> str:
-    """Detect the summary type from the opening of the transcript; falls back to "meeting"."""
+             on_usage: UsageCallback | None = None,
+             should_stop: StopCallback | None = None) -> str:
+    """Detect the summary type from the opening of the transcript; falls back to "meeting".
+    Raises SummaryCancelled if should_stop() turns True."""
     config = config or LLMConfig.from_env()
     classification = _classification_model(registry)
     raw = _chat(provider, "classify", on_usage, _classify_messages(transcript, registry), model,
-                classification.model_json_schema(), config)
+                classification.model_json_schema(), config, should_stop=should_stop)
     try:
         meeting_type = classification.model_validate_json(_strip_fences(raw)).meeting_type
     except ValidationError as e:
@@ -421,18 +513,22 @@ def summarize(transcript: str, provider: str = "auto", model: str | None = None,
               summary_type: str = "auto", *, config: LLMConfig | None = None,
               registry: Registry = DEFAULT_REGISTRY,
               on_usage: UsageCallback | None = None,
-              instructions: str | None = None) -> SummaryBase:
+              instructions: str | None = None,
+              should_stop: StopCallback | None = None) -> SummaryBase:
     """provider: "auto" runs locally if the transcript fits the local model, else DeepSeek.
     summary_type: a registry type, or "auto" to detect it with a short extra request.
     on_usage is called with the tokens of every model request.
     instructions: the user's wishes for this summary, sent after the transcript and ranked
-    below the rules and the schema; they don't affect classification."""
+    below the rules and the schema; they don't affect classification.
+    should_stop is polled before and after every request and between Ollama stream chunks;
+    once it returns True, SummaryCancelled is raised."""
+    _check_stop(should_stop)
     config = config or LLMConfig.from_env()
     instructions = normalize_instructions(instructions)
     provider = resolve_provider(transcript, provider, config, registry, instructions)
     if summary_type == "auto":
         summary_type = classify(transcript, provider, model, config=config, registry=registry,
-                                on_usage=on_usage)
+                                on_usage=on_usage, should_stop=should_stop)
         print(f"Тип записи: {registry.get(summary_type).label}", file=sys.stderr)
     if instructions:
         # User input: only its size goes to the log.
@@ -442,7 +538,9 @@ def summarize(transcript: str, provider: str = "auto", model: str | None = None,
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         raw = _chat(provider, "summary", on_usage, messages, model, schema, config,
-                    attempt=attempt)
+                    attempt=attempt, should_stop=should_stop)
+        # A DeepSeek request can't be interrupted: drop its result if cancelled meanwhile.
+        _check_stop(should_stop)
         try:
             result = _parse(raw, summary_type, registry)
         except ValidationError as e:
