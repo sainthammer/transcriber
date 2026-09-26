@@ -1,10 +1,12 @@
 """Recordings: the processing pipeline, the job queue and its persistence."""
 
 import json
+import logging
 import secrets
 import shutil
 import subprocess
 import threading
+import time
 from contextlib import closing
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -14,7 +16,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 from .. import summary as summary_mod
-from ..cli import COMPUTE_TYPE, DEVICE, default_model, fmt_time, get_duration, transcribe
+from ..cli import default_model, fmt_time, get_duration, load_model, transcribe
+from ..log import job_id as log_job_id
 from ..summary import LLMConfig, Usage
 from ..summary_types import Registry, SummaryBase
 from .db import JobRecord, UsageRecord, iso
@@ -24,6 +27,9 @@ STAGES = ("transcribing", "summarizing")
 BROWSER_AUDIO = {".mp3", ".m4a", ".aac", ".wav"}
 PLAYBACK_FILE = "audio.m4a"
 WHISPER_MODEL_NAME = "whisper-large-v3-turbo"
+
+# Metadata only: job ids, stages, timings, error types — never transcripts or summaries.
+log = logging.getLogger(__name__)
 
 
 class Cancelled(Exception):
@@ -41,9 +47,7 @@ class Pipeline:
 
     def transcribe(self, path: str, language: str | None):
         if self._model is None:
-            from faster_whisper import WhisperModel
-
-            self._model = WhisperModel(default_model(), device=DEVICE, compute_type=COMPUTE_TYPE)
+            self._model = load_model(default_model())
         return transcribe(path, self._model, language)
 
     def resolve_provider(self, transcript: str, provider: str, config: LLMConfig,
@@ -304,6 +308,11 @@ class JobManager:
                 job_id, kind = self.queue.pop(0)
                 job = self.jobs[job_id]
                 job.status = "running"
+            # Tags the model logs of this thread with the job id until the job ends.
+            token = log_job_id.set(job.id)
+            started = time.monotonic()
+            log.info("job started: kind=%s audio=%ss options=%s", kind, job.duration_sec,
+                     {k: job.options.get(k) for k in ("provider", "summary_type", "summary")})
             try:
                 if kind == "full":
                     self._run_full(job)
@@ -312,17 +321,25 @@ class JobManager:
                 if job.cancelled:
                     raise Cancelled
                 job.status, job.stage = "done", None
+                log.info("job done: elapsed=%.1fs summary=%s", time.monotonic() - started,
+                         "error" if job.summary_error else bool(job.summary))
             except Cancelled:
+                log.info("job cancelled: elapsed=%.1fs", time.monotonic() - started)
                 shutil.rmtree(self.dir(job), ignore_errors=True)
                 continue
-            except Exception as e:  # noqa: BLE001 — any failure ends up in the job, not the log
+            except Exception as e:  # noqa: BLE001 — the message goes to the job; the log
+                # gets only the type, since messages may quote the transcript.
                 if job.cancelled:
                     shutil.rmtree(self.dir(job), ignore_errors=True)
                     continue
+                log.error("job failed: stage=%s elapsed=%.1fs error=%s", job.stage,
+                          time.monotonic() - started, type(e).__name__)
                 job.status, job.error = "error", str(e) or type(e).__name__
                 if job.stage:
                     self._finish(job, job.stage, "error")
                 job.stage = None
+            finally:
+                log_job_id.reset(token)
             self._save(job)
 
     def _begin(self, job: Job, stage: str) -> None:
@@ -386,6 +403,7 @@ class JobManager:
         except Cancelled:
             raise
         except Exception as e:  # noqa: BLE001
+            log.warning("summary failed, transcript kept: error=%s", type(e).__name__)
             job.summary_error = str(e) or type(e).__name__
             if job.stage == "summarizing":
                 self._finish(job, "summarizing", "error")
