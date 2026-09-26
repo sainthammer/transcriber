@@ -1,0 +1,5 @@
+# LF везде, в том числе при клонировании на Windows: файлы попадают в Linux-контейнер
+* text=auto eol=lf
+*.docx binary
+*.png binary
+*.ico binary

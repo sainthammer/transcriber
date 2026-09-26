@@ -1,0 +1,28 @@
+# Секреты, данные пользователя и модели — не в образ (монтируются в docker-compose.yml)
+.env
+.env.*
+!.env.example
+models/
+recordings/
+instance/
+
+# Окружения, кэши, сборки — собираются внутри образа
+.venv/
+**/__pycache__/
+*.py[oc]
+.pytest_cache/
+.ruff_cache/
+web/node_modules/
+web/dist/
+web/.screenshots/
+web/test-results/
+web/playwright-report/
+
+# Не нужно для запуска
+.git/
+.claude/
+tests/
+Dockerfile
+docker-compose*.yml
+.dockerignore
+**/.DS_Store
