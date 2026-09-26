@@ -34,6 +34,26 @@ recordings/
 *.txt
 *.summary.md
 *.summary.json
+*.summary.docx
 # ...but keep text files that belong to the project
 !requirements*.txt
 !tests/**/*.txt
+# synthetic dev fixtures imported by web/src/dev/mock.ts
+!web/src/dev/fixtures/*
+
+# Web UI (web/): dependencies, build output, Playwright screenshots
+web/node_modules/
+web/dist/
+web/.screenshots/
+web/test-results/
+web/playwright-report/
+
+# macOS
+.DS_Store
+
+# Web UI encryption key for stored API keys (when SECRET_KEY isn't set)
+instance/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
