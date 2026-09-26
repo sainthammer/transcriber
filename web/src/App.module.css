@@ -1,0 +1,161 @@
+.loading {
+  min-height: 100dvh;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  height: 100dvh;
+}
+
+.shell[data-layout="wide"] {
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+}
+
+.workspace {
+  min-width: 0;
+  min-height: 0;
+}
+
+/* --- Sidebar --- */
+.sidebar {
+  display: grid;
+  grid-template-rows: var(--header-h) minmax(0, 1fr);
+  height: 100dvh;
+  background: var(--bg-sidebar);
+  box-shadow: inset -1px 0 0 var(--separator);
+  padding-left: var(--safe-left);
+}
+
+.sidebarHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2) 0 var(--space-5);
+}
+
+.sidebarHeader > button:first-child {
+  margin-left: calc(var(--space-3) * -1);
+}
+
+.sidebarTitle {
+  flex: 1;
+  font-family: var(--font-text);
+  font-size: var(--text-17);
+  font-weight: var(--weight-bold);
+}
+
+.sidebarScroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-2) var(--space-2) var(--space-8);
+}
+
+/* --- Medium: sidebar as a drawer --- */
+.drawerOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: var(--scrim);
+  animation: fade-in var(--dur-2) var(--ease);
+}
+
+.drawer {
+  position: fixed;
+  z-index: 41;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: calc(var(--sidebar-w) + 24px);
+  box-shadow: var(--shadow-float);
+  animation: drawer-in var(--dur-3) var(--ease);
+}
+
+.drawer .sidebar {
+  box-shadow: inset -1px 0 0 var(--floating-border);
+}
+
+@keyframes drawer-in {
+  from {
+    transform: translateX(-24px);
+    opacity: 0;
+  }
+}
+
+/* --- Home (a list exists, nothing selected) --- */
+.home {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100dvh;
+  overflow-y: auto;
+}
+
+.homeBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--header-h);
+  padding: 0 var(--space-2);
+}
+
+/* --- First run: the account button floats over the drop zone --- */
+.first {
+  position: relative;
+}
+
+.corner {
+  position: absolute;
+  z-index: 5;
+  top: calc(env(safe-area-inset-top, 0px) + var(--space-6));
+  right: calc(var(--safe-right) + var(--space-6));
+}
+
+@media (min-width: 768px) {
+  .corner {
+    top: var(--space-8);
+    right: var(--space-8);
+  }
+}
+
+/* --- Narrow list screen --- */
+.listScreen {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: calc(env(safe-area-inset-top, 0px) + var(--space-8)) calc(var(--space-3) + var(--safe-right))
+    calc(var(--space-12) + var(--safe-bottom)) calc(var(--space-3) + var(--safe-left));
+}
+
+.listHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 0 var(--space-3) var(--space-6);
+}
+
+.listActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-right: calc(var(--space-1) * -1);
+}
+
+.listTitle {
+  font-size: var(--text-display);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-tight);
+  letter-spacing: -0.028em;
+}
+
+.listHint {
+  margin-top: var(--space-8);
+  padding: 0 var(--space-3);
+  font-size: var(--text-13);
+  color: var(--text-secondary);
+}
+
+@media (pointer: coarse) {
+  .listHint {
+    display: none;
+  }
+}

@@ -1,0 +1,217 @@
+/* --- Wide and medium: fixed-height columns that scroll independently --- */
+.screen {
+  position: relative;
+  display: grid;
+  grid-template-rows: var(--header-h) minmax(0, 1fr);
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--header-h);
+  padding: 0 calc(var(--space-2) + var(--safe-right)) 0 calc(var(--space-2) + var(--safe-left));
+  box-shadow: inset 0 -1px 0 var(--separator);
+}
+
+.headerStart {
+  display: flex;
+  align-items: center;
+  justify-self: start;
+}
+
+.headerEnd {
+  grid-column: 3;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  justify-self: end;
+}
+
+.headerEnd [data-copied] {
+  color: var(--success);
+}
+
+.headerTitle {
+  max-width: min(520px, 50vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-15);
+  font-weight: var(--weight-bold);
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity var(--dur-2) var(--ease),
+    transform var(--dur-2) var(--ease);
+}
+
+.headerTitle[data-visible] {
+  opacity: 1;
+  transform: none;
+}
+
+.back {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  padding-right: var(--space-2);
+  color: var(--accent-text);
+  font-size: var(--text-17);
+  transition: opacity var(--dur-1) var(--ease);
+}
+
+.back:active {
+  opacity: 0.6;
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 0;
+}
+
+.columns[data-transcript] {
+  grid-template-columns: minmax(0, 1fr) var(--transcript-w);
+}
+
+.mainScroll,
+.transcriptScroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: calc(var(--player-h) + var(--safe-bottom));
+}
+
+.mainScroll {
+  --scroll-offset: var(--space-6);
+}
+
+.mainInner {
+  padding: var(--space-8) clamp(var(--space-6), 4vw, var(--space-16)) var(--space-16);
+}
+
+.transcriptScroll {
+  border-left: 1px solid var(--separator);
+}
+
+.playerSlot {
+  position: absolute;
+  z-index: 10;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+/* --- Narrow: document scroll, sticky toolbar with tabs, fixed player --- */
+.screen[data-layout="narrow"] {
+  display: block;
+  height: auto;
+  min-height: 100dvh;
+  overflow: visible;
+  padding-bottom: calc(var(--player-h) + var(--safe-bottom));
+  --sticky-top: calc(var(--header-h) + 52px + env(safe-area-inset-top, 0px));
+  --scroll-offset: calc(var(--header-h) + 52px + var(--space-4));
+}
+
+.screen[data-layout="narrow"] .header {
+  box-shadow: none;
+}
+
+/* The back button already names the place; a second title would crowd the actions. */
+.screen[data-layout="narrow"] .headerTitle {
+  display: none;
+}
+
+.stickyTop {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  padding-top: env(safe-area-inset-top, 0px);
+  background: var(--bg-material);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  box-shadow: inset 0 -1px 0 transparent;
+  transition: box-shadow var(--dur-2) var(--ease);
+}
+
+.stickyTop[data-scrolled] {
+  box-shadow: inset 0 -1px 0 var(--separator);
+}
+
+.tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  margin: 2px var(--space-4) 12px;
+  padding: 2px;
+  height: 38px;
+  border-radius: var(--radius-s);
+  background: var(--fill);
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 6px;
+  font-size: var(--text-15);
+  color: var(--text);
+  transition:
+    background var(--dur-1) var(--ease),
+    box-shadow var(--dur-1) var(--ease);
+}
+
+.tab[data-state="active"] {
+  background: var(--segment-selected);
+  box-shadow: var(--segment-shadow);
+  font-weight: var(--weight-bold);
+}
+
+.tabCount {
+  font-size: var(--text-13);
+  font-weight: var(--weight-regular);
+  color: var(--text-secondary);
+}
+
+.tabPanel[data-state="inactive"] {
+  display: none;
+}
+
+.tabPanel:focus-visible {
+  box-shadow: none;
+}
+
+.screen[data-layout="narrow"] .mainInner {
+  padding: var(--space-4) var(--space-5) var(--space-12);
+}
+
+.screen[data-layout="narrow"] .playerSlot {
+  position: fixed;
+  z-index: 30;
+}
+
+/* --- Missing recording --- */
+.missing {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: var(--space-3);
+  padding: var(--space-16) var(--space-6);
+  text-align: center;
+}
+
+.missingTitle {
+  font-size: var(--text-26);
+  font-weight: var(--weight-bold);
+  letter-spacing: -0.02em;
+}
+
+.missingText {
+  margin-bottom: var(--space-3);
+  color: var(--text-secondary);
+}

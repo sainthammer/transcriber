@@ -1,0 +1,344 @@
+.body {
+  --stamp-col: 3.25rem;
+}
+
+.body[data-long] {
+  --stamp-col: 4.5rem;
+}
+
+.lead {
+  margin-top: var(--space-6);
+  font-size: var(--text-21);
+  line-height: 1.42;
+  letter-spacing: -0.012em;
+}
+
+/* --- Table of contents: one scrollable row of chips --- */
+.toc {
+  margin: var(--space-8) calc(var(--space-2) * -1) 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  mask-image: linear-gradient(to right, transparent, #000 var(--space-2), #000 calc(100% - var(--space-6)), transparent);
+}
+
+.toc::-webkit-scrollbar {
+  display: none;
+}
+
+.toc ul {
+  display: flex;
+  gap: var(--space-2);
+  width: max-content;
+  padding: var(--space-1) var(--space-6) var(--space-1) var(--space-2);
+}
+
+.toc a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--fill);
+  color: var(--text);
+  font-size: var(--text-15);
+  white-space: nowrap;
+  transition:
+    background var(--dur-1) var(--ease),
+    transform var(--dur-1) var(--ease);
+}
+
+.toc a:hover {
+  text-decoration: none;
+  background: var(--fill-strong);
+}
+
+.toc a:active {
+  transform: scale(0.97);
+}
+
+.tocCount {
+  font-size: var(--text-13);
+  color: var(--text-secondary);
+}
+
+/* --- Sections --- */
+.section {
+  margin-top: var(--space-12);
+  scroll-margin-top: var(--scroll-offset, var(--space-6));
+}
+
+.section:focus-visible,
+.emptySection:focus-visible {
+  box-shadow: none;
+}
+
+.h2 {
+  margin-bottom: var(--space-4);
+  font-size: var(--text-21);
+  font-weight: var(--weight-bold);
+  line-height: 1.2;
+  letter-spacing: -0.012em;
+}
+
+.emptySection {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-2);
+  margin-top: var(--space-10);
+  scroll-margin-top: var(--scroll-offset, var(--space-6));
+  color: var(--text-secondary);
+}
+
+.emptySection .h2 {
+  margin: 0;
+  font-size: var(--text-17);
+}
+
+.emptySection + .emptySection {
+  margin-top: var(--space-3);
+}
+
+.emptyText {
+  font-size: var(--text-17);
+}
+
+.h3 {
+  font-family: var(--font-text);
+  font-size: var(--text-17);
+  font-weight: var(--weight-bold);
+  line-height: 1.35;
+}
+
+.meta {
+  margin-top: 2px;
+  font-size: var(--text-15);
+  color: var(--text-secondary);
+}
+
+/* A section key without a title (the type was edited after the summary was made). */
+.rawKey {
+  font-size: 0.86em;
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+}
+
+/* --- Lists --- */
+.bullets,
+.points {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.points {
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+
+.bullets li,
+.points li {
+  position: relative;
+  padding-left: var(--space-5);
+}
+
+.bullets li::before,
+.points li::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 0.62em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+}
+
+/* Rows that start with a timestamp: decisions, tasks, topics, competencies. */
+.timed {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.timed > li {
+  display: grid;
+  grid-template-columns: var(--stamp-col) minmax(0, 1fr);
+  column-gap: var(--space-3);
+  align-items: start;
+}
+
+.timed > li > button {
+  justify-self: start;
+  margin-top: -1px;
+}
+
+/* --- Figures --- */
+.figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--space-6) var(--space-4);
+}
+
+.figure dt {
+  font-family: var(--font-display);
+  font-size: var(--text-21);
+  font-weight: var(--weight-bold);
+  line-height: 1.25;
+  letter-spacing: -0.012em;
+}
+
+.figure dd {
+  margin-top: var(--space-1);
+  font-size: var(--text-15);
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+/* --- Participants --- */
+.people {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.people li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+}
+
+.person strong {
+  font-weight: var(--weight-bold);
+}
+
+.role {
+  color: var(--text-secondary);
+}
+
+.tag {
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--fill);
+  font-size: var(--text-13);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.subsections {
+  display: grid;
+  gap: var(--space-6);
+}
+
+.subsections .h3 {
+  margin-bottom: var(--space-2);
+}
+
+/* --- Interview --- */
+.assessment {
+  margin-top: var(--space-8);
+  padding: var(--space-5) var(--space-6);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+}
+
+.eyebrow {
+  font-family: var(--font-text);
+  font-size: var(--text-13);
+  font-weight: var(--weight-bold);
+  color: var(--text-secondary);
+}
+
+.verdict {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  font-family: var(--font-display);
+  font-size: var(--text-21);
+  font-weight: var(--weight-bold);
+  letter-spacing: -0.012em;
+}
+
+.rationale {
+  margin-top: var(--space-2);
+}
+
+.disclaimer {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-top: var(--space-3);
+  font-size: var(--text-13);
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.disclaimer svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.meter {
+  display: inline-flex;
+  gap: 3px;
+  flex: none;
+}
+
+.meter span {
+  width: 10px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--fill-strong);
+}
+
+.meter span[data-on] {
+  background: var(--text-secondary);
+}
+
+.verdict .meter span {
+  width: 14px;
+  height: 5px;
+}
+
+.meter[data-none] span {
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--fill-strong);
+}
+
+.position {
+  margin-bottom: var(--space-3);
+}
+
+.position .meta {
+  margin-right: var(--space-2);
+}
+
+.competencyHead {
+  display: grid;
+  gap: 2px;
+}
+
+.assessmentLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-13);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+@media (max-width: 599px) {
+  .lead {
+    font-size: var(--text-17);
+    line-height: var(--leading-text);
+  }
+
+  .timed > li {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: var(--space-1);
+  }
+
+  .assessment {
+    padding: var(--space-4);
+  }
+}

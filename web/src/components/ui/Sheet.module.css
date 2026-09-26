@@ -1,0 +1,104 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: var(--scrim);
+  animation: fade-in var(--dur-2) var(--ease);
+}
+
+.content {
+  position: fixed;
+  z-index: 41;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(480px, calc(100vw - var(--space-8)));
+  max-height: calc(100dvh - var(--space-12));
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-6) var(--space-6);
+  border-radius: var(--radius-l);
+  background: var(--bg-elevated);
+  border: 1px solid var(--floating-border);
+  box-shadow: var(--shadow-float);
+  animation: dialog-in var(--dur-3) var(--ease);
+}
+
+.content[data-width="narrow"] {
+  width: min(400px, calc(100vw - var(--space-8)));
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -48%) scale(0.98);
+  }
+}
+
+@media (max-width: 599px) {
+  .content,
+  .content[data-width="narrow"] {
+    top: auto;
+    bottom: 0;
+    left: 0;
+    transform: none;
+    width: 100%;
+    max-height: calc(100dvh - var(--space-6));
+    padding-bottom: calc(var(--space-6) + var(--safe-bottom));
+    border-radius: var(--radius-l) var(--radius-l) 0 0;
+    animation-name: sheet-in;
+  }
+}
+
+@keyframes sheet-in {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: var(--tap);
+  margin: 0 calc(var(--space-3) * -1) 0 0;
+}
+
+.header[data-alert] {
+  margin: var(--space-2) 0 0;
+  min-height: 0;
+}
+
+.title {
+  font-size: var(--text-21);
+  font-weight: var(--weight-bold);
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+
+.description {
+  margin-top: var(--space-2);
+  font-size: var(--text-15);
+  color: var(--text-secondary);
+}
+
+.body {
+  display: grid;
+  gap: var(--space-5);
+  margin-top: var(--space-5);
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-8);
+}
+
+@media (max-width: 599px) {
+  .footer > * {
+    flex: 1;
+  }
+}

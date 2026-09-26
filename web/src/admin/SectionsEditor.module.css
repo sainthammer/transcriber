@@ -1,0 +1,87 @@
+.editor {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.list {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.card {
+  padding: var(--space-2) var(--space-2) var(--space-5) var(--space-5);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  animation: rise-in var(--dur-3) var(--ease);
+}
+
+/* Fields sit on the card: lift them to the elevated surface instead of fill-on-fill. */
+.card input,
+.card textarea {
+  background: var(--bg-elevated);
+}
+
+.card input:hover:not(:focus),
+.card textarea:hover:not(:focus) {
+  background: var(--bg-elevated);
+  box-shadow: inset 0 0 0 1px var(--separator);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.number {
+  font-size: var(--text-13);
+  font-weight: var(--weight-bold);
+  color: var(--text-secondary);
+}
+
+.tools {
+  display: flex;
+}
+
+.delete:hover:not(:disabled) {
+  color: var(--danger);
+}
+
+.fields {
+  display: grid;
+  /* The key column fits a full 32-character key in the monospace font. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 20rem);
+  gap: var(--space-4);
+  padding-right: var(--space-3);
+}
+
+.description {
+  grid-column: 1 / -1;
+}
+
+/* Three lines: the placeholder is not cut in the middle of a line. */
+.description textarea {
+  min-height: calc(3lh + 2 * var(--space-3));
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-4);
+}
+
+.footer p {
+  flex: 1 1 18rem;
+}
+
+@media (max-width: 599px) {
+  .card {
+    padding-left: var(--space-4);
+  }
+
+  .fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

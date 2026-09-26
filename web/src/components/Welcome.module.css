@@ -1,0 +1,125 @@
+.wrap {
+  display: grid;
+  min-height: 100%;
+  padding: var(--space-4);
+  padding-bottom: calc(var(--space-4) + var(--safe-bottom));
+}
+
+.wrap[data-variant="first"] {
+  min-height: 100dvh;
+}
+
+.zone {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: var(--space-12);
+  padding: var(--space-16) var(--space-6);
+  border-radius: var(--radius-l);
+  border: 1.5px dashed var(--separator);
+  animation: rise-in var(--dur-4) var(--ease);
+}
+
+.hero {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  max-width: 34rem;
+}
+
+.glyph {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin-bottom: var(--space-6);
+  border-radius: var(--radius-l);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.title {
+  font-size: var(--text-display);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-tight);
+  letter-spacing: -0.025em;
+}
+
+.lead {
+  margin: var(--space-4) 0 var(--space-8);
+  font-size: var(--text-17);
+  color: var(--text-secondary);
+}
+
+.formats {
+  margin-top: var(--space-3);
+  font-size: var(--text-13);
+  color: var(--text-secondary);
+}
+
+.status {
+  width: 100%;
+  max-width: 34rem;
+}
+
+.statusTitle {
+  font-size: var(--text-13);
+  font-weight: var(--weight-bold);
+  color: var(--text-secondary);
+  margin-bottom: var(--space-2);
+  padding-left: var(--space-4);
+}
+
+.rows {
+  border-radius: var(--radius-m);
+  background: var(--fill);
+}
+
+.row {
+  display: flex;
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: var(--space-3) var(--space-4);
+}
+
+.row + .row {
+  box-shadow: inset 0 1px 0 var(--separator);
+}
+
+.dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  transform: translateY(-1px);
+}
+
+.dot[data-ok] {
+  background: var(--success);
+}
+
+.rowTitle {
+  display: block;
+  font-size: var(--text-15);
+  font-weight: var(--weight-medium);
+}
+
+.rowText {
+  display: block;
+  font-size: var(--text-13);
+  color: var(--text-secondary);
+}
+
+.privacy {
+  margin-top: var(--space-3);
+  padding: 0 var(--space-4);
+  font-size: var(--text-13);
+  color: var(--text-secondary);
+}
+
+@media (min-width: 768px) {
+  .wrap {
+    padding: var(--space-6);
+  }
+}

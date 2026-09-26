@@ -1,0 +1,26 @@
+.fields {
+  display: grid;
+  gap: var(--space-6);
+}
+
+/* Fields under the switch group. */
+.groupFields {
+  margin-top: var(--space-6);
+}
+
+.fields textarea:not(.prompt) {
+  min-height: calc(3lh + 2 * var(--space-3));
+}
+
+.prompt {
+  min-height: 16rem;
+  line-height: 1.5;
+}
+
+.saveBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-8);
+  animation: rise-in var(--dur-3) var(--ease);
+}

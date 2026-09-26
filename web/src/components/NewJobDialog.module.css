@@ -1,0 +1,161 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: var(--scrim);
+  animation: fade-in var(--dur-2) var(--ease);
+}
+
+.content {
+  position: fixed;
+  z-index: 41;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(480px, calc(100vw - var(--space-8)));
+  max-height: calc(100dvh - var(--space-12));
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-6) var(--space-6);
+  border-radius: var(--radius-l);
+  background: var(--bg-elevated);
+  border: 1px solid var(--floating-border);
+  box-shadow: var(--shadow-float);
+  animation: dialog-in var(--dur-3) var(--ease);
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -48%) scale(0.98);
+  }
+}
+
+/* Phones: a bottom sheet is easier to reach than a centered dialog. */
+@media (max-width: 599px) {
+  .content {
+    top: auto;
+    bottom: 0;
+    left: 0;
+    transform: none;
+    width: 100%;
+    max-height: calc(100dvh - var(--space-6));
+    padding-bottom: calc(var(--space-6) + var(--safe-bottom));
+    border-radius: var(--radius-l) var(--radius-l) 0 0;
+    animation-name: sheet-in;
+  }
+}
+
+@keyframes sheet-in {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 calc(var(--space-3) * -1) var(--space-3) 0;
+}
+
+.title {
+  font-size: var(--text-21);
+  font-weight: var(--weight-bold);
+  letter-spacing: -0.01em;
+}
+
+.file {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-1) var(--space-3) var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+}
+
+.fileIcon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-s);
+  background: var(--bg-elevated);
+  color: var(--accent-text);
+}
+
+.fileText {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.fileName {
+  font-size: var(--text-15);
+  font-weight: var(--weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fileMeta {
+  font-size: var(--text-13);
+  color: var(--text-secondary);
+}
+
+.body {
+  display: grid;
+  margin-top: var(--space-4);
+}
+
+.summaryOptions {
+  display: grid;
+  gap: var(--space-5);
+  padding: var(--space-4) 0 var(--space-2);
+  animation: fade-in var(--dur-2) var(--ease);
+}
+
+.error {
+  margin-top: var(--space-4);
+  padding: var(--space-3);
+  border-radius: var(--radius-s);
+  background: var(--fill);
+  color: var(--danger);
+  font-size: var(--text-15);
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+}
+
+.upload {
+  flex: 1;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.uploadLabel {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--text-13);
+  color: var(--text-secondary);
+}
+
+.bar {
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+  overflow: hidden;
+}
+
+.barFill {
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left;
+  transition: transform var(--dur-2) var(--ease);
+}

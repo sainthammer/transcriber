@@ -1,0 +1,221 @@
+.shell {
+  display: grid;
+  grid-template-columns: var(--admin-nav-w) minmax(0, 1fr);
+  min-height: 100dvh;
+}
+
+/* --- Sidebar --- */
+.sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100dvh;
+  overflow-y: auto;
+  padding: 0 var(--space-3) var(--space-8) calc(var(--space-3) + var(--safe-left));
+  background: var(--bg-sidebar);
+  box-shadow: inset -1px 0 0 var(--separator);
+}
+
+.sidebarHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--header-h);
+  margin-right: calc(var(--space-1) * -1);
+}
+
+.backLink {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  margin-left: calc(var(--space-2) * -1);
+  padding-right: var(--space-2);
+  color: var(--accent-text);
+  font-size: var(--text-17);
+  transition: opacity var(--dur-1) var(--ease);
+}
+
+.backLink:hover {
+  text-decoration: none;
+  opacity: 0.75;
+}
+
+.backLink:active {
+  opacity: 0.55;
+}
+
+.sidebarTitle {
+  margin: var(--space-2) var(--space-3) var(--space-3);
+  font-family: var(--font-text);
+  font-size: var(--text-13);
+  font-weight: var(--weight-bold);
+  color: var(--text-secondary);
+}
+
+.navList {
+  display: grid;
+  gap: 2px;
+}
+
+.navItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 40px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-s);
+  font-size: var(--text-15);
+  color: var(--text);
+  transition:
+    background var(--dur-1) var(--ease),
+    transform var(--dur-1) var(--ease);
+}
+
+.navItem svg {
+  flex: none;
+  color: var(--text-secondary);
+}
+
+.navItem:hover {
+  text-decoration: none;
+}
+
+/* Navigation marks the current page with a fill, so hover previews it with a lighter one;
+   the item has its own inset and radius, so the text never meets the fill's edge. */
+@media (hover: hover) {
+  .navItem:hover {
+    background: var(--fill);
+  }
+}
+
+.navItem:active {
+  transform: scale(0.98);
+}
+
+.navItem[aria-current="page"] {
+  background: var(--fill-strong);
+  font-weight: var(--weight-medium);
+}
+
+.navItem[aria-current="page"] svg {
+  color: var(--accent-text);
+}
+
+.content {
+  min-width: 0;
+  padding-right: var(--safe-right);
+}
+
+/* --- Narrow --- */
+.narrow {
+  min-height: 100dvh;
+  padding: env(safe-area-inset-top, 0px) var(--safe-right) 0 var(--safe-left);
+}
+
+.index {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 var(--space-5) calc(var(--space-12) + var(--safe-bottom));
+}
+
+.indexBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: var(--header-h);
+  margin-right: calc(var(--space-2) * -1);
+}
+
+.indexTitle {
+  margin: var(--space-4) 0 var(--space-6);
+  font-size: var(--text-title);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-tight);
+  letter-spacing: -0.022em;
+}
+
+.indexList {
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  animation: rise-in var(--dur-4) var(--ease);
+}
+
+.indexList > li + li {
+  box-shadow: inset 0 1px 0 var(--separator);
+}
+
+.indexItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 64px;
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  color: var(--text);
+  transition: background var(--dur-1) var(--ease);
+}
+
+.indexList > li:first-child > .indexItem {
+  border-radius: var(--radius-m) var(--radius-m) 0 0;
+}
+
+.indexList > li:last-child > .indexItem {
+  border-radius: 0 0 var(--radius-m) var(--radius-m);
+}
+
+.indexItem:hover {
+  text-decoration: none;
+}
+
+/* Hover: label in the accent, chevron nudges forward — like the admin's link rows. */
+.indexLabel,
+.indexChevron {
+  transition:
+    color var(--dur-1) var(--ease),
+    transform var(--dur-1) var(--ease);
+}
+
+@media (hover: hover) {
+  .indexItem:hover .indexLabel,
+  .indexItem:hover .indexChevron {
+    color: var(--accent-text);
+  }
+
+  .indexItem:hover .indexChevron {
+    transform: translateX(2px);
+  }
+}
+
+.indexItem:active {
+  background: var(--fill-strong);
+}
+
+.indexIcon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-s);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.indexText {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.indexLabel {
+  font-size: var(--text-17);
+}
+
+.indexHint {
+  font-size: var(--text-13);
+  color: var(--text-secondary);
+}
+
+.indexChevron {
+  flex: none;
+  color: var(--text-tertiary);
+}

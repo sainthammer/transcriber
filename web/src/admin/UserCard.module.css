@@ -1,0 +1,52 @@
+.subtitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  overflow-wrap: anywhere;
+}
+
+.role {
+  min-width: 300px;
+}
+
+.nameControl {
+  flex: 1 1 18rem;
+  max-width: 26rem;
+}
+
+.nameInput {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-15);
+}
+
+.appear {
+  animation: fade-in var(--dur-2) var(--ease);
+}
+
+.file {
+  max-width: clamp(9rem, 22vw, 18rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--weight-medium);
+}
+
+.jobRow {
+  display: flex;
+  align-items: center;
+  min-height: 60px;
+  padding: var(--space-3) var(--space-4);
+}
+
+@media (max-width: 599px) {
+  .role {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .nameControl {
+    max-width: none;
+  }
+}

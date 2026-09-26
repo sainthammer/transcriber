@@ -1,0 +1,159 @@
+.fields {
+  display: grid;
+  gap: var(--space-6);
+}
+
+.input[data-mono],
+[data-mono] input,
+.code {
+  font-family: var(--font-mono);
+  font-size: var(--text-15);
+}
+
+.aside {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex: none;
+}
+
+.source {
+  font-size: var(--text-13);
+  color: var(--text-secondary);
+}
+
+.source[data-source="db"] {
+  color: var(--accent-text);
+}
+
+/* Small text button, enlarged hit area without shifting the layout. */
+.reset {
+  position: relative;
+  font-size: var(--text-13);
+  font-weight: var(--weight-medium);
+  color: var(--accent-text);
+}
+
+.reset::after {
+  content: "";
+  position: absolute;
+  inset: -12px -8px;
+}
+
+.reset:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.reset:disabled {
+  opacity: 0.4;
+}
+
+.secret {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.mask {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-s);
+  background: var(--fill);
+  font-size: var(--text-15);
+  letter-spacing: 0.02em;
+}
+
+.secretActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.secretEdit {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.secretEdit > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.stack {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.unreachable {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: var(--text-13);
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.unreachable span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.unreachable svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--danger);
+}
+
+.language {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.language > :first-child {
+  flex: 1 1 16rem;
+}
+
+.code {
+  width: 7rem;
+}
+
+.saveRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  animation: rise-in var(--dur-3) var(--ease);
+}
+
+.test {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  margin-bottom: var(--space-5);
+  padding: var(--space-3);
+  border-radius: var(--radius-s);
+  background: var(--danger-soft);
+  font-size: var(--text-15);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  animation: fade-in var(--dur-2) var(--ease);
+}
+
+.test svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--danger);
+}
+
+.test[data-ok] {
+  background: var(--fill);
+}
+
+.test[data-ok] svg {
+  color: var(--success);
+}

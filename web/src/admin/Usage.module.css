@@ -1,0 +1,231 @@
+.period {
+  min-width: 300px;
+}
+
+.body {
+  transition: opacity var(--dur-2) var(--ease);
+}
+
+.body[data-loading] {
+  opacity: 0.5;
+}
+
+.kpis {
+  margin-bottom: var(--space-12);
+}
+
+/* Label, value and note line up across a row even when a label wraps. */
+.kpis > div {
+  display: grid;
+  grid-row: span 3;
+  grid-template-rows: subgrid;
+}
+
+/* On a two-line label the swatch sits on the first line, not between them. */
+.kpis dt {
+  align-items: flex-start;
+}
+
+.kpis .swatch {
+  align-self: flex-start;
+  margin-top: calc((1.47em - 10px) / 2);
+}
+
+.kpiNote {
+  margin-top: 2px;
+  font-size: var(--text-13);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.emptyPeriod {
+  margin-top: calc(var(--space-12) * -1 + var(--space-6));
+}
+
+.swatch {
+  display: inline-block;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.swatch[data-provider="deepseek"] {
+  background: var(--paid);
+}
+
+.swatch[data-provider="ollama"] {
+  background: var(--free);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  font-size: var(--text-13);
+  color: var(--text-secondary);
+}
+
+.legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Share of the heaviest user, under the name. */
+.share {
+  display: flex;
+  gap: 1px;
+  height: 4px;
+  margin-top: 6px;
+  max-width: 220px;
+}
+
+.share > span {
+  border-radius: 2px;
+  min-width: 0;
+}
+
+.share > span[data-provider="deepseek"] {
+  background: var(--paid);
+}
+
+.share > span[data-provider="ollama"] {
+  background: var(--free);
+}
+
+.userCell {
+  min-width: 12rem;
+}
+
+.userCell a {
+  font-weight: var(--weight-medium);
+}
+
+.paid {
+  color: var(--accent-text);
+  font-weight: var(--weight-medium);
+}
+
+.model {
+  min-width: 0;
+  font-size: var(--text-13);
+  overflow-wrap: anywhere;
+}
+
+/* Phones: a long model name wraps whole, the badge moves to its own line. */
+.modelTitle {
+  flex-wrap: wrap;
+  row-gap: var(--space-1);
+}
+
+/* Phones: numbers wrap between items instead of being cut off. */
+.meta {
+  white-space: normal;
+}
+
+/* Each item stays whole: "22 ч 34 мин" is not split across lines. */
+.meta > span {
+  white-space: nowrap;
+}
+
+.modelCell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+}
+
+.modelRow {
+  display: flex;
+  align-items: center;
+  min-height: 60px;
+  padding: var(--space-3) var(--space-4);
+}
+
+/* --- Matrix --- */
+.matrix th[scope="col"] {
+  vertical-align: bottom;
+}
+
+.matrixHead {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: var(--weight-medium);
+}
+
+.matrixHead code {
+  font-size: var(--text-12);
+}
+
+.matrix .matrixUser {
+  padding: var(--space-3) var(--space-3) var(--space-3) 0;
+  font-size: var(--text-15);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+  text-align: left;
+  white-space: nowrap;
+  box-shadow: inset 0 -1px 0 var(--separator);
+}
+
+/* Heat: stronger tint for heavier use; accent for paid, grey for free. */
+.matrix td {
+  position: relative;
+}
+
+.matrix td::before {
+  content: "";
+  position: absolute;
+  inset: 3px 0;
+  border-radius: var(--radius-s);
+  opacity: calc(0.08 + var(--level) * 0.3);
+}
+
+.matrix td[data-provider="deepseek"]::before {
+  background: var(--paid);
+}
+
+.matrix td[data-provider="ollama"]::before {
+  background: var(--free);
+  opacity: calc(0.15 + var(--level) * 0.45);
+}
+
+.matrix td[data-zero]::before {
+  display: none;
+}
+
+.matrix td[data-zero] {
+  color: var(--text-tertiary);
+}
+
+.matrix td > span {
+  position: relative;
+  padding-right: var(--space-2);
+}
+
+.matrix td:last-child > span {
+  padding-right: var(--space-2);
+}
+
+.matrix td:last-child {
+  padding-right: 0;
+}
+
+@media (max-width: 599px) {
+  .period {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .kpis {
+    grid-template-columns: 1fr 1fr;
+    margin-bottom: var(--space-10);
+  }
+
+  .matrix .matrixUser {
+    min-width: 10rem;
+    white-space: normal;
+    overflow-wrap: break-word;
+  }
+}

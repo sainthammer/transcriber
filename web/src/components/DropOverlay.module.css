@@ -1,0 +1,25 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  padding: var(--space-4);
+  background: var(--bg-material);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  backdrop-filter: blur(16px) saturate(160%);
+  pointer-events: none;
+  animation: fade-in var(--dur-2) var(--ease);
+}
+
+.frame {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--space-4);
+  height: 100%;
+  border-radius: var(--radius-l);
+  border: 2px dashed var(--accent-text);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: var(--text-21);
+  font-weight: var(--weight-bold);
+}

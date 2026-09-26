@@ -1,0 +1,425 @@
+/* Shared building blocks of the admin pages. */
+
+/* --- Grouped rows (inset grouped list) --- */
+.group {
+  border-radius: var(--radius-m);
+  background: var(--fill);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  min-height: 56px;
+  padding: var(--space-3) var(--space-5);
+}
+
+.row + .row {
+  box-shadow: inset 0 1px 0 var(--separator);
+}
+
+.rowLabel {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.rowTitle {
+  display: block;
+  font-size: var(--text-15);
+  font-weight: var(--weight-medium);
+}
+
+.rowHint {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--text-13);
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.rowControl {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* Rows that are links to a detail page. */
+.linkRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 60px;
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  color: var(--text);
+  transition: background var(--dur-1) var(--ease);
+}
+
+.group > li:first-child > .linkRow,
+.group > .linkRow:first-child {
+  border-radius: var(--radius-m) var(--radius-m) 0 0;
+}
+
+.group > li:last-child > .linkRow,
+.group > .linkRow:last-child {
+  border-bottom-left-radius: var(--radius-m);
+  border-bottom-right-radius: var(--radius-m);
+}
+
+.group > li:only-child > .linkRow {
+  border-radius: var(--radius-m);
+}
+
+.group > li + li {
+  box-shadow: inset 0 1px 0 var(--separator);
+}
+
+/* Hover speaks through the text, not a fill: the title takes the accent and the
+   chevron nudges forward. The whole row stays the target; a press still tints it
+   (touch feedback). Same language as the table rows below. */
+.linkRow:hover {
+  text-decoration: none;
+}
+
+.linkRow:active {
+  background: var(--fill-strong);
+}
+
+.linkTitle > span:first-child,
+.chevron {
+  transition:
+    color var(--dur-1) var(--ease),
+    transform var(--dur-1) var(--ease);
+}
+
+@media (hover: hover) {
+  .linkRow:hover .linkTitle > span:first-child,
+  .linkRow:hover .chevron {
+    color: var(--accent-text);
+  }
+
+  .linkRow:hover .chevron {
+    transform: translateX(2px);
+  }
+}
+
+.linkText {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.linkTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--text-15);
+  font-weight: var(--weight-medium);
+}
+
+.linkTitle > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.linkMeta {
+  margin-top: 2px;
+  font-size: var(--text-13);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chevron {
+  flex: none;
+  color: var(--text-tertiary);
+}
+
+/* --- Badges --- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+  font-size: var(--text-12);
+  font-weight: var(--weight-medium);
+  line-height: 18px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.badge[data-tone="accent"] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.badge[data-tone="danger"] {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* --- Tables --- */
+.tableWrap {
+  overflow-x: auto;
+  margin: 0 calc(var(--space-3) * -1);
+  padding: 0 var(--space-3);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-15);
+}
+
+.table th {
+  padding: 0 var(--space-3) var(--space-2);
+  font-size: var(--text-13);
+  font-weight: var(--weight-bold);
+  color: var(--text-secondary);
+  text-align: left;
+  white-space: nowrap;
+  box-shadow: inset 0 -1px 0 var(--separator);
+}
+
+.table td {
+  padding: var(--space-3);
+  vertical-align: middle;
+  box-shadow: inset 0 -1px 0 var(--separator);
+}
+
+.table th:first-child,
+.table td:first-child {
+  padding-left: 0;
+}
+
+.table th:last-child,
+.table td:last-child {
+  padding-right: 0;
+}
+
+.table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.table .muted {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.table tbody tr[data-link] {
+  position: relative;
+  cursor: pointer;
+}
+
+/* The name cell's link stretches over the whole row (::after), so the row is one
+   big target. Hover doesn't fill the row — the first column has no inset and the
+   name would sit flush against the fill's edge — the name takes the accent instead. */
+.rowLink {
+  color: inherit;
+  transition:
+    color var(--dur-1) var(--ease),
+    opacity var(--dur-1) var(--ease);
+}
+
+.rowLink::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+.rowLink:hover {
+  text-decoration: none;
+}
+
+@media (hover: hover) {
+  .table tbody tr[data-link]:hover .rowLink {
+    color: var(--accent-text);
+  }
+}
+
+.table tbody tr[data-link]:active .rowLink {
+  opacity: 0.6;
+}
+
+/* Keyboard focus: a ring around the row, set off from the text by the table's
+   side gutter and kept inside the scroll box (it clips the last row's bottom). */
+.rowLink::before {
+  content: "";
+  position: absolute;
+  inset: 3px calc(var(--space-2) * -1);
+  border-radius: var(--radius-s);
+  pointer-events: none;
+}
+
+.rowLink:focus-visible {
+  box-shadow: none;
+}
+
+.rowLink:focus-visible::before {
+  box-shadow: var(--focus-ring);
+}
+
+.person {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.personText {
+  display: grid;
+  min-width: 0;
+}
+
+.personName {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px var(--space-2);
+  min-width: 0;
+  font-weight: var(--weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.personEmail {
+  font-size: var(--text-13);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+tr[data-inactive] .personName > span:first-child,
+tr[data-inactive] .num {
+  color: var(--text-secondary);
+}
+
+/* --- Stats --- */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  overflow: hidden;
+}
+
+.stat {
+  padding: var(--space-4) var(--space-5);
+  box-shadow: -1px 0 0 var(--separator), 0 -1px 0 var(--separator);
+}
+
+.statValue {
+  display: block;
+  font-family: var(--font-display);
+  font-size: var(--text-21);
+  font-weight: var(--weight-bold);
+  line-height: 1.25;
+  letter-spacing: -0.012em;
+  font-variant-numeric: tabular-nums;
+}
+
+.statValue[data-small] {
+  font-size: var(--text-17);
+  line-height: calc(var(--text-21) * 1.25);
+  letter-spacing: -0.005em;
+}
+
+.statLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+  font-size: var(--text-13);
+  color: var(--text-secondary);
+}
+
+/* A footnote under a group, inset like the rows' text. */
+.group + .rowHint {
+  margin-top: var(--space-3);
+  padding: 0 var(--space-5);
+}
+
+/* --- Misc --- */
+.empty {
+  padding: var(--space-8) var(--space-5);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  text-align: center;
+  font-size: var(--text-15);
+  color: var(--text-secondary);
+}
+
+.note {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  margin-bottom: var(--space-4);
+  font-size: var(--text-13);
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.note svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+.search {
+  position: relative;
+  margin-bottom: var(--space-5);
+  max-width: 360px;
+}
+
+.search svg {
+  position: absolute;
+  left: var(--space-3);
+  top: 50%;
+  translate: 0 -50%;
+  color: var(--text-secondary);
+  pointer-events: none;
+}
+
+.search input {
+  padding-left: calc(var(--space-3) + 16px + var(--space-2));
+  font-size: var(--text-15);
+}
+
+@media (max-width: 599px) {
+  .row {
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .rowControl {
+    flex: 1 1 100%;
+  }
+
+  /* A switch stays at the end of its row, like in iOS Settings. */
+  .rowControl:has(> input[role="switch"]) {
+    flex: none;
+  }
+
+  .group + .rowHint {
+    padding: 0 var(--space-4);
+  }
+
+  .stat {
+    padding: var(--space-3) var(--space-4);
+  }
+}

@@ -1,0 +1,22 @@
+.trigger {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: var(--tap);
+  height: var(--tap);
+  border-radius: 50%;
+  transition: transform var(--dur-1) var(--ease), opacity var(--dur-1) var(--ease);
+}
+
+.trigger:hover > span,
+.trigger[data-state="open"] > span {
+  box-shadow: 0 0 0 3px var(--fill-strong);
+}
+
+.trigger > span {
+  transition: box-shadow var(--dur-1) var(--ease);
+}
+
+.trigger:active {
+  transform: scale(0.94);
+}

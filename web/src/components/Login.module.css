@@ -1,0 +1,62 @@
+.screen {
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  padding: calc(env(safe-area-inset-top, 0px) + var(--space-12)) calc(var(--space-5) + var(--safe-right))
+    calc(var(--space-12) + var(--safe-bottom)) calc(var(--space-5) + var(--safe-left));
+}
+
+.form {
+  display: grid;
+  width: 100%;
+  max-width: 360px;
+  animation: rise-in var(--dur-4) var(--ease);
+}
+
+.mark {
+  justify-self: center;
+  margin-bottom: var(--space-6);
+  border-radius: 14px;
+  box-shadow: var(--shadow-float);
+}
+
+.mark svg {
+  display: block;
+}
+
+.title {
+  text-align: center;
+  font-size: var(--text-title);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-tight);
+  letter-spacing: -0.022em;
+}
+
+.lead {
+  margin-top: var(--space-2);
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.fields {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-8);
+}
+
+.alertSlot:not(:empty) {
+  margin-top: var(--space-4);
+}
+
+.submit {
+  margin-top: var(--space-6);
+  width: 100%;
+}
+
+.footnote {
+  margin-top: var(--space-6);
+  text-align: center;
+  font-size: var(--text-13);
+  line-height: 1.4;
+  color: var(--text-secondary);
+}

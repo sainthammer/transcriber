@@ -1,0 +1,40 @@
+.ring {
+  flex: none;
+  transform: rotate(-90deg);
+}
+
+.track {
+  fill: none;
+  stroke: var(--fill-strong);
+}
+
+.ring[data-queued] .track {
+  stroke: var(--text-tertiary);
+  stroke-dasharray: 2 3;
+}
+
+.value {
+  fill: none;
+  stroke: var(--accent-text);
+  stroke-linecap: round;
+  transition: stroke-dashoffset var(--dur-3) var(--ease);
+}
+
+.ring[data-indeterminate] {
+  animation: ring-spin 1.1s linear infinite;
+}
+
+@keyframes ring-spin {
+  from {
+    transform: rotate(-90deg);
+  }
+  to {
+    transform: rotate(270deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ring[data-indeterminate] {
+    animation: none;
+  }
+}

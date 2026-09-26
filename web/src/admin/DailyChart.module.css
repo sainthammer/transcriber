@@ -1,0 +1,205 @@
+.chart {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: var(--space-3);
+  padding: var(--space-5) var(--space-5) var(--space-4);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+}
+
+/* Y axis labels sit on the gridlines drawn by .plot's background. They share one grid
+   cell, so the column is as wide as the widest label and nothing spills out on the left. */
+.axis {
+  display: grid;
+  height: 180px;
+  font-size: var(--text-12);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.axis span {
+  grid-area: 1 / 1;
+  justify-self: end;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.axis span:nth-child(1) {
+  align-self: start;
+  translate: 0 -50%;
+}
+
+.axis span:nth-child(2) {
+  align-self: center;
+}
+
+.axis span:nth-child(3) {
+  align-self: end;
+  translate: 0 50%;
+}
+
+.plot {
+  position: relative;
+  display: grid;
+  align-items: end;
+  column-gap: 3px;
+  height: 180px;
+  border-radius: 2px;
+  background:
+    linear-gradient(var(--separator), var(--separator)) 0 0 / 100% 1px no-repeat,
+    linear-gradient(var(--separator), var(--separator)) 0 50% / 100% 1px no-repeat,
+    linear-gradient(var(--separator), var(--separator)) 0 100% / 100% 1px no-repeat;
+}
+
+.plot[data-dense] {
+  column-gap: 1px;
+}
+
+.plot:focus-visible {
+  box-shadow: 0 0 0 4px var(--bg), var(--focus-ring);
+}
+
+.column {
+  position: relative;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.column::before {
+  content: "";
+  position: absolute;
+  inset: 0 -1px;
+  border-radius: 3px;
+  background: var(--fill);
+  opacity: 0;
+  transition: opacity var(--dur-1) var(--ease);
+}
+
+.column[data-active]::before {
+  opacity: 1;
+}
+
+.stack {
+  position: relative;
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: flex-start;
+  width: 100%;
+  max-width: 36px;
+  height: 100%;
+}
+
+.stack > span {
+  min-height: 2px;
+  transform-origin: bottom;
+  animation: grow var(--dur-4) var(--ease) both;
+}
+
+/* The top segment gets the rounded corners. */
+.stack > span:last-child {
+  border-radius: 3px 3px 0 0;
+}
+
+.plot[data-dense] .stack > span:last-child {
+  border-radius: 1px 1px 0 0;
+}
+
+.paid {
+  background: var(--paid);
+}
+
+.free {
+  background: var(--free);
+}
+
+@keyframes grow {
+  from {
+    transform: scaleY(0);
+  }
+}
+
+.tick {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  left: 0;
+  font-size: var(--text-12);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.chart {
+  padding-bottom: calc(var(--space-4) + 20px);
+}
+
+/* --- Tooltip --- */
+.tooltip {
+  position: absolute;
+  z-index: 2;
+  bottom: calc(100% + var(--space-2));
+  translate: -50% 0;
+  display: grid;
+  gap: 2px;
+  min-width: 168px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-s);
+  background: var(--bg-elevated);
+  border: 1px solid var(--floating-border);
+  box-shadow: var(--shadow-float);
+  font-size: var(--text-13);
+  pointer-events: none;
+  animation: fade-in var(--dur-1) var(--ease);
+}
+
+.tooltip[data-edge="start"] {
+  translate: -12px 0;
+}
+
+.tooltip[data-edge="end"] {
+  translate: calc(-100% + 12px) 0;
+}
+
+.tooltip strong {
+  font-weight: var(--weight-bold);
+}
+
+.tooltip span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+}
+
+.tooltip b {
+  margin-left: auto;
+  padding-left: var(--space-3);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+}
+
+.tooltip i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.tooltip i[data-provider="deepseek"] {
+  background: var(--paid);
+}
+
+.tooltip i[data-provider="ollama"] {
+  background: var(--free);
+}
+
+@media (max-width: 599px) {
+  .chart {
+    padding: var(--space-4) var(--space-3) calc(var(--space-3) + 20px);
+    column-gap: var(--space-2);
+  }
+
+  .axis,
+  .plot {
+    height: 150px;
+  }
+}

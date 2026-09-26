@@ -1,0 +1,20 @@
+.offline {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: var(--space-3);
+  min-height: 100dvh;
+  padding: var(--space-6);
+  text-align: center;
+}
+
+.title {
+  font-size: var(--text-26);
+  font-weight: var(--weight-bold);
+  letter-spacing: -0.02em;
+}
+
+.text {
+  max-width: 28rem;
+  color: var(--text-secondary);
+}

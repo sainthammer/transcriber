@@ -1,0 +1,143 @@
+/* Design tokens. Components use only these variables. */
+:root {
+  color-scheme: light dark;
+
+  /* Type */
+  --font-text: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --text-12: 12px;
+  --text-13: 13px;
+  --text-15: 15px;
+  --text-17: 17px;
+  --text-21: 21px;
+  --text-26: 26px;
+  --text-title: clamp(26px, 0.5vw + 22px, 32px);
+  --text-display: clamp(28px, 1.6vw + 20px, 41px);
+  --leading-text: 1.47;
+  --leading-tight: 1.12;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-bold: 600;
+
+  /* Space: 4/8 scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Radii: small controls / blocks / floating surfaces */
+  --radius-s: 8px;
+  --radius-m: 12px;
+  --radius-l: 20px;
+  --radius-full: 999px;
+
+  /* Layout */
+  --sidebar-w: 264px;
+  --transcript-w: clamp(400px, 32vw, 480px);
+  --measure: 680px;
+  --admin-nav-w: 240px;
+  --page-w: 960px;
+  --header-h: 52px;
+  --player-h: 64px;
+  --tap: 44px;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+
+  /* Motion */
+  --ease: cubic-bezier(0.25, 1, 0.5, 1);
+  --dur-1: 150ms;
+  --dur-2: 220ms;
+  --dur-3: 320ms;
+  --dur-4: 500ms;
+
+  /* Color — light */
+  --bg: #fbfbfd;
+  --bg-sidebar: #f3f3f6;
+  --bg-elevated: #ffffff;
+  --bg-material: rgb(251 251 253 / 0.78);
+  --fill: rgb(0 0 0 / 0.045);
+  --fill-strong: rgb(0 0 0 / 0.08);
+  --separator: rgb(0 0 0 / 0.09);
+  --text: #1d1d1f;
+  --text-secondary: #6e6e73;
+  --text-tertiary: #8e8e93; /* icons and decoration only, not body text */
+  --accent: #0b6bcb;
+  --accent-hover: #0a5fb4;
+  --accent-text: #0b6bcb;
+  --on-accent: #ffffff;
+  --accent-soft: rgb(11 107 203 / 0.1);
+  --accent-soft-strong: rgb(11 107 203 / 0.18);
+  --danger: #c4312a;
+  --success: #1f8a3d;
+  --mark: rgb(255 204 0 / 0.36);
+  --mark-active: #ffcc00;
+  --mark-active-text: #1d1d1f;
+  --scrim: rgb(0 0 0 / 0.28);
+  --focus-ring: 0 0 0 3px rgb(11 107 203 / 0.45);
+  --floating-border: rgb(0 0 0 / 0.06);
+  --shadow-float: 0 1px 2px rgb(0 0 0 / 0.06), 0 8px 24px rgb(0 0 0 / 0.1),
+    0 24px 64px rgb(0 0 0 / 0.08);
+  --shadow-bar: 0 -1px 0 rgb(0 0 0 / 0.06), 0 -8px 24px rgb(0 0 0 / 0.04);
+  --segment-selected: #ffffff;
+  --segment-shadow: 0 1px 2px rgb(0 0 0 / 0.08), 0 0 0 0.5px rgb(0 0 0 / 0.06);
+  --danger-soft: rgb(196 49 42 / 0.1);
+  --danger-solid: #c4312a; /* background under white text */
+  /* Usage: paid cloud tokens use the accent, free local tokens a neutral grey. */
+  --paid: #0b6bcb;
+  --free: #b4b4bb;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141416;
+    --bg-sidebar: #1b1b1e;
+    --bg-elevated: #232326;
+    --bg-material: rgb(28 28 31 / 0.78);
+    --fill: rgb(255 255 255 / 0.06);
+    --fill-strong: rgb(255 255 255 / 0.11);
+    --separator: rgb(255 255 255 / 0.1);
+    --text: #f5f5f7;
+    --text-secondary: #a1a1a6;
+    --text-tertiary: #7c7c82;
+    --accent: #0b6bcb;
+    --accent-hover: #1a78d6;
+    --accent-text: #5aa9ff;
+    --accent-soft: rgb(90 169 255 / 0.13);
+    --accent-soft-strong: rgb(90 169 255 / 0.22);
+    --danger: #ff6b61;
+    --success: #3fcf6a;
+    --mark: rgb(255 214 10 / 0.26);
+    --mark-active: #ffd60a;
+    --scrim: rgb(0 0 0 / 0.5);
+    --focus-ring: 0 0 0 3px rgb(90 169 255 / 0.55);
+    --floating-border: rgb(255 255 255 / 0.1);
+    /* In the dark, depth comes from lighter surfaces, not shadows. */
+    --shadow-float: none;
+    --shadow-bar: none;
+    --segment-selected: rgb(255 255 255 / 0.16);
+    --segment-shadow: none;
+    --danger-soft: rgb(255 107 97 / 0.14);
+    --danger-solid: #d93a31;
+    --paid: #3d8fea;
+    --free: #5c5c63;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-1: 0ms;
+    --dur-2: 0ms;
+    --dur-3: 0ms;
+    --dur-4: 0ms;
+  }
+}

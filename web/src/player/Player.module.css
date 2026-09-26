@@ -1,0 +1,295 @@
+.bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: calc(var(--player-h) + var(--safe-bottom));
+  padding: 0 calc(var(--space-4) + var(--safe-right)) var(--safe-bottom)
+    calc(var(--space-3) + var(--safe-left));
+  background: var(--bg-material);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  border-top: 1px solid var(--separator);
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+}
+
+.skip,
+.play,
+.rate,
+.retry {
+  display: inline-grid;
+  place-items: center;
+  transition:
+    background var(--dur-1) var(--ease),
+    transform var(--dur-1) var(--ease),
+    opacity var(--dur-1) var(--ease);
+}
+
+.skip {
+  position: relative;
+  width: var(--tap);
+  height: var(--tap);
+  border-radius: var(--radius-full);
+  color: var(--text);
+  font-size: var(--text-13);
+  font-weight: var(--weight-bold);
+}
+
+
+.play {
+  width: var(--tap);
+  height: var(--tap);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* Optical centering: the triangle's visual mass sits left of its box. */
+.playIcon {
+  transform: translateX(1px);
+}
+
+.skip:hover:not(:disabled),
+.rate:hover:not(:disabled) {
+  background: var(--fill);
+}
+
+.play:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.skip:active:not(:disabled),
+.play:active:not(:disabled),
+.rate:active:not(:disabled),
+.retry:active {
+  transform: scale(0.94);
+}
+
+.bar button:disabled {
+  opacity: 0.35;
+}
+
+.timeline {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.time {
+  flex: none;
+  min-width: 4ch;
+  font-size: var(--text-13);
+  color: var(--text-secondary);
+}
+
+.total {
+  text-align: right;
+}
+
+.scrubber {
+  position: relative;
+  flex: 1;
+  height: var(--tap);
+  display: flex;
+  align-items: center;
+}
+
+.track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+  overflow: hidden;
+}
+
+.fill {
+  position: absolute;
+  inset: 0;
+  background: var(--accent);
+  transform-origin: left;
+  transform: scaleX(var(--progress));
+}
+
+/* Topic boundaries cut small gaps into the track, like chapters. */
+.marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--bg);
+}
+
+.range {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.range:focus-visible {
+  box-shadow: none;
+}
+
+.range::-webkit-slider-runnable-track {
+  height: 100%;
+  background: transparent;
+}
+
+.range::-moz-range-track {
+  background: transparent;
+}
+
+.range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: calc((var(--tap) - 14px) / 2);
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-elevated);
+  transform: scale(0);
+  transition: transform var(--dur-1) var(--ease);
+}
+
+.range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-elevated);
+  transform: scale(0);
+  transition: transform var(--dur-1) var(--ease);
+}
+
+.scrubber:hover .range::-webkit-slider-thumb,
+.range:focus-visible::-webkit-slider-thumb,
+.range:active::-webkit-slider-thumb {
+  transform: scale(1);
+}
+
+.scrubber:hover .range::-moz-range-thumb,
+.range:focus-visible::-moz-range-thumb,
+.range:active::-moz-range-thumb {
+  transform: scale(1);
+}
+
+.range:focus-visible::-webkit-slider-thumb {
+  box-shadow: var(--focus-ring);
+}
+
+@media (pointer: coarse) {
+  .range::-webkit-slider-thumb {
+    transform: scale(1);
+  }
+}
+
+.rate {
+  flex: none;
+  min-width: var(--tap);
+  height: 32px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-s);
+  background: var(--fill);
+  font-size: var(--text-13);
+  font-weight: var(--weight-bold);
+  position: relative;
+}
+
+/* Keep the visible pill compact but the tap target at 44px. */
+.rate::after {
+  content: "";
+  position: absolute;
+  inset: -6px 0;
+}
+
+.compactTime {
+  display: none;
+  font-size: var(--text-13);
+  color: var(--text-secondary);
+}
+
+.status {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--text-13);
+  color: var(--text-secondary);
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid var(--fill-strong);
+  border-top-color: var(--text-secondary);
+  animation: spin 0.9s linear infinite;
+}
+
+.retry {
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-s);
+  color: var(--accent-text);
+  font-weight: var(--weight-bold);
+}
+
+.retry:hover {
+  background: var(--fill);
+}
+
+/* Narrow: the scrubber becomes a thin line along the top edge of the bar. */
+@media (max-width: 639px) {
+  .bar {
+    gap: var(--space-2);
+  }
+
+  .timeline {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -12px;
+    height: 24px;
+  }
+
+  .timeline .time {
+    display: none;
+  }
+
+  .scrubber {
+    height: 24px;
+  }
+
+  .track {
+    top: 11px;
+    height: 3px;
+    border-radius: 0;
+  }
+
+  .range::-webkit-slider-thumb {
+    margin-top: 5px;
+  }
+
+  .compactTime {
+    display: block;
+    flex: 1;
+    text-align: center;
+  }
+}
