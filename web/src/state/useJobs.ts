@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react'
 import { api, urls } from '../api/client'
 import type { JobListItem } from '../api/types'
 
+/** Window event fired when a job's current summary version changes; detail is the job id. */
+export const SUMMARY_CHANGED = 'transcriber:summary-changed'
+
 export type Connection = 'connecting' | 'open' | 'lost'
 
 const byNewest = (a: JobListItem, b: JobListItem) =>
@@ -37,6 +40,11 @@ export function useJobs() {
       source.addEventListener('job_deleted', (e) => {
         const { id } = JSON.parse(e.data) as { id: string }
         setJobs((prev) => prev?.filter((j) => j.id !== id) ?? prev)
+      })
+      // An open recording re-reads itself: its own stream is closed once the job is final.
+      source.addEventListener('summary_changed', (e) => {
+        const { id } = JSON.parse(e.data) as { id: string }
+        window.dispatchEvent(new CustomEvent(SUMMARY_CHANGED, { detail: id }))
       })
       source.onerror = () => {
         source?.close()

@@ -13,7 +13,7 @@ model: inherit
 
 `web/`: Vite + React + TypeScript, CSS Modules и токены в `src/styles/`, Radix UI для
 диалогов/меню/табов/подсказок, иконки Lucide, npm. Работай в этом стеке и стиле; правила
-про типы, прокси, EventSource и моки — в CLAUDE.md («Веб-интерфейс»), уже в контексте.
+про типы, прокси, EventSource и моки — в `web/CLAUDE.md`, прочитай его первым.
 
 ## Принципы
 

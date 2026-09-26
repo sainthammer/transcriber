@@ -1,0 +1,14 @@
+.textarea {
+  min-height: calc(var(--text-15) * 1.45 * 3 + var(--space-3) * 2);
+  max-height: 40vh;
+  font-size: var(--text-15);
+}
+
+.counter {
+  font-size: var(--text-13);
+  color: var(--text-secondary);
+}
+
+.counter[data-low] {
+  color: var(--danger);
+}

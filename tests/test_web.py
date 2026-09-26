@@ -1,4 +1,6 @@
 import json
+import logging
+import threading
 import time
 from urllib.parse import unquote
 
@@ -7,7 +9,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from transcriber.server import create_app
-from transcriber.server.db import Setting
+from transcriber.server.db import Setting, SummaryVersion
+from transcriber.server.jobs import SUMMARY_VERSIONS_LIMIT
 from transcriber.summary import Usage
 
 from test_summary_types import make_data
@@ -28,6 +31,9 @@ class FakePipeline:
         self.summary_error = summary_error
         self.phrases = [(0.0, "привет"), (1.5, "как дела")] if phrases is None else phrases
         self.summarized_with = []  # (provider, summary_type)
+        self.instructions = []  # per summarize call
+        self.title = "Планёрка"
+        self.gate: threading.Event | None = None  # set → summarize waits for it
         self.languages = []
         self.configs = []
 
@@ -40,19 +46,23 @@ class FakePipeline:
             yield phrase
             yield float(i + 1)
 
-    def resolve_provider(self, transcript, provider, config, registry):
+    def resolve_provider(self, transcript, provider, config, registry, *, instructions=None):
         return "ollama" if provider == "auto" else provider
 
-    def summarize(self, transcript, provider, summary_type, *, config, registry, on_usage):
+    def summarize(self, transcript, provider, summary_type, *, config, registry, on_usage,
+                  instructions=None):
         self.summarized_with.append((provider, summary_type))
+        self.instructions.append(instructions)
         self.configs.append(config)
+        if self.gate:
+            assert self.gate.wait(5)
         on_usage(Usage(provider, "fake-model", "summary", 1000, 200))
         if self.summary_error:
             raise self.summary_error
         type_id = "meeting" if summary_type == "auto" else summary_type
         t = registry.get(type_id)
         if t.builtin:
-            return registry.parse(make_data(type_id, title="Планёрка"))
+            return registry.parse(make_data(type_id, title=self.title))
         details = {k: ["пункт"] for k in t.details.model_fields}
         return registry.parse({**SUMMARY, "meeting_type": type_id, "details": details})
 
@@ -367,6 +377,8 @@ def test_legacy_jobs_imported_for_first_admin(make_app, tmp_path):
     assert job["transcript"][0]["text"] == "Старая запись."
     assert set(job["stages"]) == {"transcribing", "summarizing"}
     assert "punctuation" not in job["options"]
+    assert [(v["provider"], v["summary_type"], v["current"])
+            for v in job["summary_versions"]] == [("unknown", "meeting", True)]
     again = make_app()  # the next start doesn't import it twice
     assert list(again.state.manager.jobs) == [legacy.name]
 
@@ -596,3 +608,192 @@ def test_last_enabled_type_cannot_be_disabled(make_client):
                          json={"enabled": False}).status_code == 200
     resp = admin.put("/api/admin/summary-types/highlights", json={"enabled": False})
     assert resp.status_code == 409
+
+
+# --- summary versions and wishes ---
+
+def regenerate(client, job_id, **body):
+    body = {"provider": "auto", "summary_type": "meeting", **body}
+    resp = client.post(f"/api/jobs/{job_id}/summary", json=body)
+    assert resp.status_code == 202, resp.text
+    return wait_until(client, job_id, lambda j: j["status"] == "done")
+
+
+def done_job(client):
+    job_id = upload(client)
+    return job_id, wait_until(client, job_id, lambda j: j["status"] == "done")
+
+
+def test_first_summary_is_a_version(make_client):
+    client = make_client()
+    _, job = done_job(client)
+    [version] = job["summary_versions"]
+    assert version == {"id": version["id"], "created_at": version["created_at"],
+                       "provider": "ollama", "summary_type": "meeting",
+                       "instructions": None, "current": True}
+    assert "summary_versions" not in client.get("/api/jobs").json()[0]
+
+
+def test_regenerate_with_instructions(make_client, tmp_path):
+    pipeline = FakePipeline()
+    client = make_client(pipeline)
+    job_id, first = done_job(client)
+    pipeline.title = "Вторая версия"
+    job = regenerate(client, job_id, provider="deepseek",
+                     instructions="  Иван — заказчик, а не исполнитель \n")
+
+    assert pipeline.instructions == [None, "Иван — заказчик, а не исполнитель"]
+    assert job["summary"]["title"] == "Вторая версия"
+    assert job["provider_used"] == "deepseek"
+    assert job["options"]["instructions"] == "Иван — заказчик, а не исполнитель"
+    new, old = job["summary_versions"]
+    assert (new["provider"], new["instructions"], new["current"]) == \
+        ("deepseek", "Иван — заказчик, а не исполнитель", True)
+    assert (old["id"], old["current"]) == (first["summary_versions"][0]["id"], False)
+    assert "# Вторая версия" in (tmp_path / "jobs" / job_id / "summary.md").read_text()
+
+    regenerate(client, job_id, instructions="   ")  # blank → no wishes
+    assert pipeline.instructions[-1] is None
+
+
+def test_instructions_length_limit(make_client):
+    pipeline = FakePipeline()
+    client = make_client(pipeline)
+    job_id, _ = done_job(client)
+    body = {"provider": "auto", "summary_type": "meeting"}
+    resp = client.post(f"/api/jobs/{job_id}/summary", json={**body, "instructions": "я" * 2001})
+    assert resp.status_code == 422
+    assert "2000" in json.dumps(resp.json(), ensure_ascii=False)
+    regenerate(client, job_id, instructions=f"  {'я' * 2000}  ")  # trimmed first
+    assert pipeline.instructions[-1] == "я" * 2000
+
+
+def test_instructions_not_logged(make_client, caplog):
+    caplog.set_level(logging.DEBUG, logger="transcriber")
+    pipeline = FakePipeline()
+    client = make_client(pipeline)
+    job_id, _ = done_job(client)
+    secret = "Секретное-пожелание-9051"
+    regenerate(client, job_id, instructions=secret)
+    assert pipeline.instructions[-1] == secret
+    started = [r.getMessage() for r in caplog.records if "job started: kind=summary" in
+               r.getMessage()]
+    assert started and f"instructions_chars={len(secret)}" in started[-1]
+    assert secret not in caplog.text
+
+
+def test_failed_regeneration_keeps_previous_summary(make_client):
+    pipeline = FakePipeline()
+    client = make_client(pipeline)
+    job_id, first = done_job(client)
+    pipeline.gate = threading.Event()
+    pipeline.summary_error = RuntimeError("DeepSeek недоступен")
+    assert client.post(f"/api/jobs/{job_id}/summary",
+                       json={"provider": "deepseek", "summary_type": "meeting",
+                             "instructions": "подробнее"}).status_code == 202
+    running = wait_until(client, job_id, lambda j: j["stage"] == "summarizing")
+    assert running["summary"] == first["summary"]  # not cleared while regenerating
+    pipeline.gate.set()
+
+    job = wait_until(client, job_id, lambda j: j["status"] == "done")
+    assert job["summary"] == first["summary"]
+    assert job["summary_error"] == "DeepSeek недоступен"
+    assert job["provider_used"] == "ollama"  # the kept summary's provider
+    assert job["summary_versions"] == first["summary_versions"]
+    assert client.get(f"/api/jobs/{job_id}/download/summary.json").json()["title"] == "Планёрка"
+
+
+def test_versions_limit(make_client):
+    client = make_client()
+    job_id, first = done_job(client)
+    for _ in range(SUMMARY_VERSIONS_LIMIT):
+        job = regenerate(client, job_id)
+    versions = job["summary_versions"]
+    assert len(versions) == SUMMARY_VERSIONS_LIMIT
+    assert first["summary_versions"][0]["id"] not in {v["id"] for v in versions}
+    assert versions[0]["current"] and not any(v["current"] for v in versions[1:])
+    with client.app.state.sessions() as db:
+        assert len(db.scalars(select(SummaryVersion)).all()) == SUMMARY_VERSIONS_LIMIT
+
+
+def test_restore_version(make_client, tmp_path):
+    pipeline = FakePipeline()
+    client = make_client(pipeline)
+    job_id, first = done_job(client)
+    old_id = first["summary_versions"][0]["id"]
+    pipeline.title = "Вторая версия"
+    regenerate(client, job_id, provider="deepseek")
+    pipeline.summary_error = RuntimeError("сбой")
+    assert regenerate(client, job_id)["summary_error"] == "сбой"
+
+    resp = client.post(f"/api/jobs/{job_id}/summary/versions/{old_id}/restore")
+    assert resp.status_code == 200, resp.text
+    job = resp.json()
+    assert job == client.get(f"/api/jobs/{job_id}").json()
+    assert job["summary"] == first["summary"]
+    assert job["provider_used"] == "ollama"
+    assert job["summary_error"] is None
+    assert job["stages"]["summarizing"]["status"] == "done"
+    assert [v["current"] for v in job["summary_versions"]] == [False, True]
+    assert "# Планёрка" in (tmp_path / "jobs" / job_id / "summary.md").read_text()
+    assert client.get(f"/api/jobs/{job_id}/download/summary.json").json()["title"] == "Планёрка"
+    assert client.get("/api/jobs").json()[0]["title"] == "Планёрка"
+
+
+def test_restore_not_found_and_busy(make_client):
+    admin = make_client()
+    add_user(admin)
+    anna = as_user(admin)
+    job_id, job = done_job(admin)
+    other_id, other = done_job(admin)
+    version_id = job["summary_versions"][0]["id"]
+    url = f"/api/jobs/{job_id}/summary/versions/{version_id}/restore"
+
+    assert anna.post(url).status_code == 404  # someone else's recording
+    assert admin.post(f"/api/jobs/{job_id}/summary/versions/999999/restore").status_code == 404
+    other_version = other["summary_versions"][0]["id"]
+    assert admin.post(f"/api/jobs/{job_id}/summary/versions/{other_version}/restore"
+                      ).status_code == 404  # a version of another recording
+
+    manager = admin.app.state.manager
+    for status in ("queued", "running"):
+        manager.jobs[job_id].status = status
+        assert admin.post(url).status_code == 409
+        assert admin.post(f"/api/jobs/{job_id}/summary",
+                          json={"provider": "auto", "summary_type": "meeting"}
+                          ).status_code == 409
+    manager.jobs[job_id].status = "done"
+    assert admin.post(url).status_code == 200
+
+
+def test_summary_changed_event(make_client):
+    pipeline = FakePipeline()
+    client = make_client(pipeline)
+    job_id, first = done_job(client)
+    old_id = first["summary_versions"][0]["id"]
+    regenerate(client, job_id)
+    body = []
+
+    def listen():
+        with client.stream("GET", "/api/events") as resp:
+            body.append(resp.read().decode())
+
+    listener = threading.Thread(target=listen)
+    listener.start()
+    time.sleep(0.3)
+    assert client.post(f"/api/jobs/{job_id}/summary/versions/{old_id}/restore"
+                       ).status_code == 200
+    time.sleep(0.8)
+    client.app.state.stopping.set()
+    listener.join(5)
+    assert f'event: summary_changed\ndata: {{"id": "{job_id}", ' \
+           f'"summary_version_id": {old_id}}}' in body[0]
+
+
+def test_delete_removes_versions(make_client):
+    client = make_client()
+    job_id, _ = done_job(client)
+    regenerate(client, job_id)
+    assert client.delete(f"/api/jobs/{job_id}").status_code == 204
+    with client.app.state.sessions() as db:
+        assert db.scalars(select(SummaryVersion)).all() == []

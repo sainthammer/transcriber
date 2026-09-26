@@ -17,7 +17,7 @@ model: sonnet
      `print`/`console.log`, мёртвого кода, неиспользуемых импортов, пустых TODO.
    - **Синхронность:** `summary_types` ↔ `web/src/api/types.ts`, рендер ↔ `docx_export`,
      `server/db.py` ↔ миграции, переменные окружения ↔ `.env.example` ↔ README.
-   - **Документация:** README — рабочие команды, коротко; CLAUDE.md — только неочевидное.
+   - **Документация:** README — рабочие команды, коротко; CLAUDE.md — только неочевидное: общее — в корневом, детали части — в её `CLAUDE.md` (`web/`, `transcriber/server/`, `transcriber/summary_types/`), Docker — в `agents/devops.md`.
    - **Git:** нет секретов, данных пользователя, артефактов сборки, больших бинарников.
 3. Прогони: `uv run pytest -q`,
    `cd web && npx tsc --noEmit -p tsconfig.app.json && npm run lint && npm run build`

@@ -79,6 +79,23 @@ class JobRecord(Base):
     summary: Mapped[dict | None] = mapped_column(Json)
     # Denormalized summary.meeting_type: admin listings and "is this type in use".
     summary_type: Mapped[str | None] = mapped_column(String(40), index=True)
+    # SummaryVersion.id of `summary`. No FK: summary_versions already points here, and a
+    # cycle would complicate deletes; the job's versions go with it by cascade.
+    summary_version_id: Mapped[int | None] = mapped_column(Integer)
+
+
+class SummaryVersion(Base):
+    """A successful summary of a job; the latest SUMMARY_VERSIONS_LIMIT per job are kept."""
+
+    __tablename__ = "summary_versions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    provider: Mapped[str] = mapped_column(String(16))
+    summary_type: Mapped[str] = mapped_column(String(40))  # = summary.meeting_type
+    instructions: Mapped[str | None] = mapped_column(Text)  # the user's wishes, if any
+    summary: Mapped[dict] = mapped_column(Json)
 
 
 class Setting(Base):

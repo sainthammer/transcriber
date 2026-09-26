@@ -12,7 +12,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import select
+from pydantic import ValidationError
+from sqlalchemy import delete, select
 from sqlalchemy.orm import sessionmaker
 
 from .. import summary as summary_mod
@@ -20,13 +21,16 @@ from ..cli import default_model, fmt_time, get_duration, load_model, transcribe
 from ..log import job_id as log_job_id
 from ..summary import LLMConfig, Usage
 from ..summary_types import Registry, SummaryBase
-from .db import JobRecord, UsageRecord, iso
+from .db import JobRecord, SummaryVersion, UsageRecord, iso
 
 STAGES = ("transcribing", "summarizing")
 # Formats every major browser can play; anything else gets an AAC copy for the player.
 BROWSER_AUDIO = {".mp3", ".m4a", ".aac", ".wav"}
 PLAYBACK_FILE = "audio.m4a"
 WHISPER_MODEL_NAME = "whisper-large-v3-turbo"
+# Summary versions kept per job: enough to compare a few regenerations with wishes,
+# while a job's rows stay small (a summary is a few KB of JSON).
+SUMMARY_VERSIONS_LIMIT = 20
 
 # Metadata only: job ids, stages, timings, error types — never transcripts or summaries.
 log = logging.getLogger(__name__)
@@ -51,13 +55,16 @@ class Pipeline:
         return transcribe(path, self._model, language)
 
     def resolve_provider(self, transcript: str, provider: str, config: LLMConfig,
-                         registry: Registry) -> str:
-        return summary_mod.resolve_provider(transcript, provider, config, registry)
+                         registry: Registry, *, instructions: str | None = None) -> str:
+        return summary_mod.resolve_provider(transcript, provider, config, registry,
+                                            instructions)
 
     def summarize(self, transcript: str, provider: str, summary_type: str, *,
-                  config: LLMConfig, registry: Registry, on_usage) -> SummaryBase:
+                  config: LLMConfig, registry: Registry, on_usage,
+                  instructions: str | None = None) -> SummaryBase:
         return summary_mod.summarize(transcript, provider, summary_type=summary_type,
-                                     config=config, registry=registry, on_usage=on_usage)
+                                     config=config, registry=registry, on_usage=on_usage,
+                                     instructions=instructions)
 
     def provider_status(self, config: LLMConfig) -> dict:
         return summary_mod.provider_status(config)
@@ -89,6 +96,7 @@ class Job:
     provider_used: str | None = None
     transcript: list[dict] = field(default_factory=list)  # [{start_sec, text}]
     summary: dict | None = None
+    summary_version_id: int | None = None  # SummaryVersion the summary came from
     cancelled: bool = False  # runtime only, not persisted
 
     def transcript_text(self) -> str:
@@ -111,7 +119,8 @@ class Job:
                    created_at=iso(r.created_at), duration_sec=r.duration_sec, options=r.options,
                    status=r.status, stage=r.stage, stages=r.stages, processed_sec=r.processed_sec,
                    error=r.error, summary_error=r.summary_error, provider_used=r.provider_used,
-                   transcript=r.transcript, summary=r.summary)
+                   transcript=r.transcript, summary=r.summary,
+                   summary_version_id=r.summary_version_id)
 
     def to_record_values(self) -> dict:
         data = {k: v for k, v in asdict(self).items() if k != "cancelled"}
@@ -163,6 +172,7 @@ class JobManager:
                         s["status"] = "error"
                 job.stage = None
                 self._save(job)
+            self._ensure_version(job)
             self.jobs[job.id] = job
             if job.status == "queued":
                 self.queue.append((job.id, "summary" if job.transcript else "full"))
@@ -188,10 +198,36 @@ class JobManager:
                 job.status, job.stage = "error", None
                 job.error = "Обработка прервана: сервер был перезапущен"
             self._save(job)
+            self._ensure_version(job)
             with self.cond:
                 self.jobs[job.id] = job
             imported += 1
         return imported
+
+    def _ensure_version(self, job: Job) -> None:
+        """A summary from before versions (imported, or a create_all database) becomes the
+        job's first version; Postgres gets the same from the migration's backfill."""
+        if job.summary and job.summary_version_id is None:
+            self._add_version(job, job.provider_used or "unknown", None)
+
+    def _add_version(self, job: Job, provider: str, instructions: str | None) -> None:
+        """Store job.summary as a new version, make it current, drop the oldest ones."""
+        if job.cancelled:
+            return
+        with self.sessions.begin() as db:
+            version = SummaryVersion(job_id=job.id, provider=provider,
+                                     summary_type=job.summary["meeting_type"],
+                                     instructions=instructions, summary=job.summary)
+            db.add(version)
+            db.flush()
+            stale = db.scalars(select(SummaryVersion.id)
+                               .where(SummaryVersion.job_id == job.id)
+                               .order_by(SummaryVersion.id.desc())
+                               .offset(SUMMARY_VERSIONS_LIMIT)).all()
+            if stale:
+                db.execute(delete(SummaryVersion).where(SummaryVersion.id.in_(stale)))
+            job.summary_version_id = version.id
+            db.merge(JobRecord(**job.to_record_values()))
 
     def _record_usage(self, job: Job, **values) -> None:
         with self.sessions.begin() as db:
@@ -228,7 +264,11 @@ class JobManager:
         self._ensure_playback(job)
         return job
 
-    def retry_summary(self, job: Job, provider: str, summary_type: str) -> None:
+    def retry_summary(self, job: Job, provider: str, summary_type: str,
+                      instructions: str | None = None) -> None:
+        """Queue a new summary; the current one stays until the new one is ready (and
+        stays for good if it fails). `instructions` ride in options, so a queued retry
+        survives a restart."""
         with self.cond:
             if job.status in ("queued", "running"):
                 raise ValueError("Запись ещё обрабатывается")
@@ -236,11 +276,40 @@ class JobManager:
                 raise ValueError("Нет расшифровки для summary")
             job.status, job.stage, job.error, job.summary_error = "queued", None, None, None
             job.options = {**job.options, "summary": True, "provider": provider,
-                           "summary_type": summary_type}
+                           "summary_type": summary_type,
+                           "instructions": summary_mod.normalize_instructions(instructions)}
             job.stages["summarizing"] = _stages()["summarizing"]
             self._save(job)
             self.queue.append((job.id, "summary"))
             self.cond.notify()
+
+    def restore_version(self, job: Job, version_id: int) -> None:
+        """Make a stored version current again: summary, provider and summary.md/.json.
+        LookupError — no such version of this job; ValueError — the job is busy or the
+        version's type no longer exists."""
+        with self.sessions() as db:
+            version = db.scalar(select(SummaryVersion).where(
+                SummaryVersion.id == version_id, SummaryVersion.job_id == job.id))
+        if version is None:
+            raise LookupError(version_id)
+        registry = self.types.registry()
+        try:
+            parsed = registry.parse(version.summary)
+        except (ValueError, ValidationError):
+            raise ValueError("Тип summary этой версии больше не существует") from None
+        with self.cond:
+            if job.status in ("queued", "running"):
+                raise ValueError("Запись ещё обрабатывается")
+            text = job.transcript_text()
+            summary_mod.save_summary(parsed, text, self.dir(job) / "summary.md", docx=False,
+                                     registry=registry)
+            job.summary = version.summary
+            # Versions backfilled from legacy jobs have no known provider.
+            job.provider_used = None if version.provider == "unknown" else version.provider
+            job.summary_version_id, job.summary_error = version.id, None
+            job.stages["summarizing"]["status"] = "done"
+            self._save(job)
+        log.info("summary version restored: version=%d", version.id)
 
     def delete(self, job_id: str) -> None:
         with self.cond:
@@ -249,6 +318,8 @@ class JobManager:
             running = job.status == "running"
             job.cancelled = True
         with self.sessions.begin() as db:
+            # The FK cascades too; explicit so it doesn't depend on SQLite's pragma.
+            db.execute(delete(SummaryVersion).where(SummaryVersion.job_id == job_id))
             if record := db.get(JobRecord, job_id):
                 db.delete(record)
         if not running:  # a running job is cleaned up by the worker once it notices
@@ -286,7 +357,20 @@ class JobManager:
             "provider_used": job.provider_used,
             "audio_ready": self.playback_path(job) is not None,
             "transcript": list(job.transcript), "summary": job.summary,
+            "summary_versions": self.versions(job),
         }
+
+    def versions(self, job: Job) -> list[dict]:
+        """Stored summaries of the job, newest first, without their content."""
+        with self.sessions() as db:
+            rows = db.execute(select(SummaryVersion.id, SummaryVersion.created_at,
+                                     SummaryVersion.provider, SummaryVersion.summary_type,
+                                     SummaryVersion.instructions)
+                              .where(SummaryVersion.job_id == job.id)
+                              .order_by(SummaryVersion.id.desc())).all()
+        return [{"id": r.id, "created_at": iso(r.created_at), "provider": r.provider,
+                 "summary_type": r.summary_type, "instructions": r.instructions,
+                 "current": r.id == job.summary_version_id} for r in rows]
 
     def admin_item(self, job: Job) -> dict:
         """Metadata only — admins don't see other users' transcripts and summaries."""
@@ -311,8 +395,11 @@ class JobManager:
             # Tags the model logs of this thread with the job id until the job ends.
             token = log_job_id.set(job.id)
             started = time.monotonic()
-            log.info("job started: kind=%s audio=%ss options=%s", kind, job.duration_sec,
-                     {k: job.options.get(k) for k in ("provider", "summary_type", "summary")})
+            # User's summary wishes are input like the transcript: only their length.
+            log.info("job started: kind=%s audio=%ss options=%s instructions_chars=%d", kind,
+                     job.duration_sec,
+                     {k: job.options.get(k) for k in ("provider", "summary_type", "summary")},
+                     len(job.options.get("instructions") or ""))
             try:
                 if kind == "full":
                     self._run_full(job)
@@ -381,6 +468,8 @@ class JobManager:
         """Summary failures don't fail the job: the transcript is still the result."""
         text = job.transcript_text()
         config, registry = self.settings.llm_config(), self.types.registry()
+        instructions = job.options.get("instructions")
+        previous_provider = job.provider_used
 
         def on_usage(u: Usage) -> None:
             self._record_usage(job, kind=u.kind, provider=u.provider, model=u.model,
@@ -388,23 +477,29 @@ class JobManager:
                                completion_tokens=u.completion_tokens)
 
         try:
-            job.provider_used = self.pipeline.resolve_provider(text, job.options["provider"],
-                                                               config, registry)
+            # provider_used is the one at work while summarizing (the stage SSE event reports
+            # it); the previous summary stays until the new one is saved.
+            job.provider_used = self.pipeline.resolve_provider(
+                text, job.options["provider"], config, registry, instructions=instructions)
             self._begin(job, "summarizing")
             result = self.pipeline.summarize(text, job.provider_used,
                                              job.options.get("summary_type", "auto"),
-                                             config=config, registry=registry, on_usage=on_usage)
+                                             config=config, registry=registry, on_usage=on_usage,
+                                             instructions=instructions)
             if job.cancelled:
                 raise Cancelled
             summary_mod.save_summary(result, text, self.dir(job) / "summary.md", docx=False,
                                      registry=registry)
             job.summary, job.summary_error = result.model_dump(), None
+            self._add_version(job, job.provider_used, instructions)
             self._finish(job, "summarizing")
         except Cancelled:
             raise
         except Exception as e:  # noqa: BLE001
             log.warning("summary failed, transcript kept: error=%s", type(e).__name__)
             job.summary_error = str(e) or type(e).__name__
+            if job.summary:  # the kept summary keeps its provider
+                job.provider_used = previous_provider
             if job.stage == "summarizing":
                 self._finish(job, "summarizing", "error")
 

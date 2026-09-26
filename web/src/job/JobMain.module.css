@@ -34,6 +34,12 @@
 
 .summary {
   animation: rise-in var(--dur-4) var(--ease);
+  transition: opacity var(--dur-3) var(--ease);
+}
+
+/* The previous version while a new one is being made: still readable, clearly not final. */
+.summary[data-stale] {
+  opacity: 0.55;
 }
 
 /* --- Processing --- */

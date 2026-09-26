@@ -1,55 +1,44 @@
-import { useState } from 'react'
-import { api } from '../api/client'
-import type {
-  Config,
-  JobDetail,
-  Provider,
-  SummaryTypeChoice,
-} from '../api/types'
+import type { FormEvent } from 'react'
+import type { Config, JobDetail } from '../api/types'
 import { prefs } from '../lib/prefs'
-import { usableProvider, usableType } from '../lib/providers'
 import { useAuth } from '../state/authContext'
 import { SummaryOptions } from '../components/SummaryOptions'
 import { Button } from '../components/ui/Button'
+import { InstructionsField } from './InstructionsField'
+import { useSummaryForm } from './useSummaryForm'
 import styles from './JobMain.module.css'
 
 interface Props {
   job: JobDetail
   config: Config | null
   kind: 'retry' | 'make'
-  onRequested: () => void
+  /** Wishes from the failed attempt, if this tab sent it. */
+  instructions?: string
+  onRequested: (instructions: string) => void
 }
 
 /** «Summary не получилось» with a retry, or «Summary не делали» with a first request. */
-export function SummaryRequest({ job, config, kind, onRequested }: Props) {
+export function SummaryRequest({ job, config, kind, instructions, onRequested }: Props) {
   const saved = prefs.newJob()
-  const [provider, setProvider] = useState<Provider>(
-    kind === 'retry' ? job.options.provider : (saved?.provider ?? 'auto')
+  const form = useSummaryForm(
+    job.id,
+    config,
+    {
+      provider: kind === 'retry' ? job.options.provider : (saved?.provider ?? 'auto'),
+      summaryType: job.options.summary_type ?? saved?.summaryType ?? 'auto',
+      instructions,
+    },
+    onRequested,
   )
-  const [wantedType, setSummaryType] = useState<SummaryTypeChoice>(
-    job.options.summary_type ?? saved?.summaryType ?? 'auto'
-  )
-  const summaryType = usableType(config, wantedType)
   const { isAdmin } = useAuth()
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const effective = config ? usableProvider(config, provider) : null
 
-  const submit = async () => {
-    if (!effective) return
-    setBusy(true)
-    setError(null)
-    try {
-      await api.requestSummary(job.id, effective, summaryType)
-      onRequested()
-    } catch (e) {
-      setError((e as Error).message)
-      setBusy(false)
-    }
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    void form.submit()
   }
 
   return (
-    <section className={styles.panel} aria-labelledby="summary-request-h">
+    <form className={styles.panel} aria-labelledby="summary-request-h" onSubmit={submit} noValidate>
       <h2 id="summary-request-h" className={styles.panelTitle}>
         {kind === 'retry' ? 'Summary не получилось' : 'Summary не делали'}
       </h2>
@@ -59,15 +48,22 @@ export function SummaryRequest({ job, config, kind, onRequested }: Props) {
           : 'Расшифровка готова. Итог соберёт главное: решения, задачи, ключевые цифры и ход обсуждения.'}
       </p>
 
-      {config && effective ? (
+      {config && form.provider ? (
         <div className={styles.panelOptions}>
           <SummaryOptions
             config={config}
-            provider={effective}
-            onProvider={setProvider}
-            summaryType={summaryType}
-            onSummaryType={setSummaryType}
+            provider={form.provider}
+            onProvider={form.setProvider}
+            summaryType={form.summaryType}
+            onSummaryType={form.setSummaryType}
           />
+          {kind === 'retry' && (
+            <InstructionsField
+              value={form.instructions}
+              onChange={form.setInstructions}
+              error={form.instructionsError}
+            />
+          )}
         </div>
       ) : (
         config && (
@@ -79,22 +75,17 @@ export function SummaryRequest({ job, config, kind, onRequested }: Props) {
         )
       )}
 
-      {error && (
+      {form.error && (
         <p className={styles.panelError} role="alert">
-          {error}
+          {form.error}
         </p>
       )}
 
       <div className={styles.panelActions}>
-        <Button
-          variant="primary"
-          onClick={submit}
-          loading={busy}
-          disabled={!effective}
-        >
+        <Button type="submit" variant="primary" loading={form.busy} disabled={!form.provider}>
           {kind === 'retry' ? 'Повторить' : 'Сделать итог'}
         </Button>
       </div>
-    </section>
+    </form>
   )
 }

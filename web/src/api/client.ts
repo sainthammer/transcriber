@@ -99,11 +99,21 @@ export const api = {
   config: () => request<Config>('/api/config'),
   job: (id: string) => request<JobDetail>(`/api/jobs/${enc(id)}`),
   deleteJob: (id: string) => send<void>('DELETE', `/api/jobs/${enc(id)}`),
-  requestSummary: (id: string, provider: Provider, summaryType: SummaryTypeChoice) =>
+  /** First summary, a retry or a new version of a ready one; `instructions` — what to change. */
+  requestSummary: (
+    id: string,
+    provider: Provider,
+    summaryType: SummaryTypeChoice,
+    instructions: string | null = null,
+  ) =>
     send<{ id: string }>('POST', `/api/jobs/${enc(id)}/summary`, {
       provider,
       summary_type: summaryType,
+      instructions,
     }),
+  /** Makes an earlier version current again; 409 while the job is being processed. */
+  restoreSummaryVersion: (id: string, versionId: number) =>
+    send<JobDetail>('POST', `/api/jobs/${enc(id)}/summary/versions/${versionId}/restore`),
 
   // Session
   me: () => request<User>('/api/auth/me'),
