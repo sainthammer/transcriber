@@ -1,10 +1,11 @@
 """Shared summary schema, the SummaryType definition and Markdown helpers."""
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
-from typing import Annotated, Callable, Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, create_model
 

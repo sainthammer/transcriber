@@ -284,4 +284,8 @@ make rebuild                                           # пересобрать 
 
 ```bash
 uv run pytest
+uv run ruff check transcriber tests   # линтер Python; make lint гоняет его и интерфейс
 ```
+
+CI (`.github/workflows/ci.yml`) на каждый push и pull request прогоняет то же самое —
+`ruff` и `pytest` для Python, `oxlint` и сборку для интерфейса.

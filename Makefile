@@ -53,7 +53,8 @@ dev: ## Интерфейс в режиме разработки (Vite)
 build: ## Собрать интерфейс в web/dist
 	cd web && npm run build
 
-lint: ## Линтер интерфейса
+lint: ## Линтер Python и интерфейса
+	uv run ruff check transcriber tests
 	cd web && npm run lint
 
 screenshots: ## Скриншоты интерфейса в web/.screenshots/
