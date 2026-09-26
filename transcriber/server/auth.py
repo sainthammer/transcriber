@@ -143,7 +143,7 @@ def login(body: LoginRequest, request: Request, response: Response):
     sessions: sessionmaker = request.app.state.sessions
     with sessions.begin() as db:
         user = db.scalar(select(User).where(User.email == email))
-        if not user or not verify_password(user.password_hash, body.password):
+        if not verify_password(user and user.password_hash, body.password):
             throttle.failed(email, ip)
             raise HTTPException(401, "Неверный email или пароль")
         if not user.is_active:
@@ -153,6 +153,8 @@ def login(body: LoginRequest, request: Request, response: Response):
         db.add(UserSession(token_hash=hashed, user_id=user.id,
                            expires_at=utcnow() + timedelta(days=SESSION_DAYS)))
         user.last_login_at = utcnow()
+        # Housekeeping: expired sessions are otherwise only removed with their user.
+        db.execute(delete(UserSession).where(UserSession.expires_at < utcnow()))
         me = CurrentUser(user.id, user.email, user.name, user.role)
     _set_cookie(response, token)
     return me.public()

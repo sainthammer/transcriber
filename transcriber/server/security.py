@@ -1,6 +1,7 @@
 """Passwords, session tokens, login throttling and encryption of stored secrets."""
 
 import base64
+import functools
 import hashlib
 import os
 import secrets
@@ -23,11 +24,22 @@ def hash_password(password: str) -> str:
     return _hasher.hash(password)
 
 
-def verify_password(password_hash: str, password: str) -> bool:
+def verify_password(password_hash: str | None, password: str) -> bool:
+    """None (no such user) still costs one hash check, so response time doesn't reveal
+    which emails have accounts."""
+    if password_hash is None:
+        password_hash, password = _dummy_hash(), ""
+        _hasher.verify(password_hash, password)
+        return False
     try:
         return _hasher.verify(password_hash, password)
     except (VerifyMismatchError, InvalidHashError):
         return False
+
+
+@functools.cache
+def _dummy_hash() -> str:
+    return _hasher.hash("")
 
 
 def check_password_strength(password: str) -> None:
@@ -46,9 +58,11 @@ def token_hash(token: str) -> str:
 
 
 class LoginThrottle:
-    """At most MAX_FAILURES wrong passwords per email+IP within WINDOW seconds."""
+    """At most MAX_FAILURES wrong passwords per email+IP within WINDOW seconds, and
+    MAX_IP_FAILURES per IP across all emails (one common password tried on many accounts)."""
 
     MAX_FAILURES = 5
+    MAX_IP_FAILURES = 30
     WINDOW = 600
 
     def __init__(self):
@@ -58,20 +72,26 @@ class LoginThrottle:
     def _recent(self, key: tuple[str, str]) -> list[float]:
         now = time.monotonic()
         recent = [t for t in self._failures.get(key, []) if now - t < self.WINDOW]
-        self._failures[key] = recent
+        if recent:
+            self._failures[key] = recent
+        else:  # don't keep a key per email ever tried
+            self._failures.pop(key, None)
         return recent
 
     def retry_after(self, email: str, ip: str) -> int | None:
         """Seconds until the next attempt is allowed, or None if it's allowed now."""
         with self._lock:
-            recent = self._recent((email, ip))
-            if len(recent) < self.MAX_FAILURES:
-                return None
-            return int(self.WINDOW - (time.monotonic() - recent[0])) + 1
+            waits = [int(self.WINDOW - (time.monotonic() - recent[-limit])) + 1
+                     for key, limit in (((email, ip), self.MAX_FAILURES),
+                                        (("", ip), self.MAX_IP_FAILURES))
+                     if len(recent := self._recent(key)) >= limit]
+            return max(waits, default=None)
 
     def failed(self, email: str, ip: str) -> None:
         with self._lock:
-            self._recent((email, ip)).append(time.monotonic())
+            now = time.monotonic()
+            for key in ((email, ip), ("", ip)):  # ("", ip) — the per-IP counter
+                self._failures[key] = [*self._recent(key), now]
 
     def succeeded(self, email: str, ip: str) -> None:
         with self._lock:

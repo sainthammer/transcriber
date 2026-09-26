@@ -175,6 +175,50 @@ def test_login_throttled_after_repeated_failures(make_client):
     assert resp.status_code == 429
 
 
+def test_login_throttled_per_ip_across_emails(monkeypatch):
+    from transcriber.server.security import LoginThrottle
+    throttle = LoginThrottle()
+    monkeypatch.setattr(throttle, "MAX_IP_FAILURES", 3)
+    for i in range(3):
+        assert throttle.retry_after(f"u{i}@example.com", "1.2.3.4") is None
+        throttle.failed(f"u{i}@example.com", "1.2.3.4")
+    assert throttle.retry_after("new@example.com", "1.2.3.4")
+    assert throttle.retry_after("new@example.com", "5.6.7.8") is None
+
+
+def test_unknown_email_still_checks_a_hash(monkeypatch):
+    from transcriber.server import security
+    calls = []
+
+    class Spy:
+        def hash(self, password):
+            return real.hash(password)
+
+        def verify(self, password_hash, password):
+            calls.append(password_hash)
+            return real.verify(password_hash, password)
+
+    real = security._hasher
+    monkeypatch.setattr(security, "_hasher", Spy())
+    assert security.verify_password(None, "whatever") is False
+    assert len(calls) == 1
+
+
+def test_login_removes_expired_sessions(make_client):
+    from datetime import timedelta
+
+    from transcriber.server.db import UserSession, utcnow
+    client = make_client()
+    sessions = client.app.state.sessions
+    with sessions.begin() as db:
+        user_id = db.scalar(select(UserSession.user_id))
+        db.add(UserSession(token_hash="0" * 64, user_id=user_id,
+                           expires_at=utcnow() - timedelta(days=1)))
+    sign_in(client, *ADMIN)
+    with sessions() as db:
+        assert db.get(UserSession, "0" * 64) is None
+
+
 def test_change_password(make_client):
     client = make_client()
     other_device = as_user(client, ADMIN)
