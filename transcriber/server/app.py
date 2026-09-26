@@ -15,7 +15,8 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi import Path as PathParam
-from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, Response,
+                               StreamingResponse)
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 
@@ -27,7 +28,7 @@ from . import admin, api_docs, auth
 from .api_docs import JOB_NOT_FOUND, UNAUTHORIZED, error
 from .auth import CurrentUser, current_user
 from .db import database_url, make_engine, make_sessionmaker, migrate
-from .jobs import Job, JobManager, Pipeline
+from .jobs import MAX_UPLOAD_BYTES, Job, JobManager, Pipeline, UploadTooLarge
 from .security import SecretBox
 from .settings import SettingsStore
 from .types_store import TypesStore
@@ -134,6 +135,18 @@ def create_app(jobs_dir: Path = DEFAULT_JOBS_DIR, pipeline=None, start_worker: b
     app.include_router(auth.router)
     app.include_router(admin.router)
 
+    @app.middleware("http")
+    async def upload_limit(request: Request, call_next):
+        # Starlette spools the whole upload to disk before the handler runs, so reject an
+        # oversized one by its declared length up front; manager.create() still counts the
+        # bytes for uploads without Content-Length.
+        length = request.headers.get("content-length", "")
+        if (request.method == "POST" and request.url.path == "/api/jobs"
+                and length.isdigit() and int(length) > MAX_UPLOAD_BYTES + 1024**2):
+            return JSONResponse({"detail": f"Файл больше {MAX_UPLOAD_BYTES // 1024**3} ГБ"},
+                                status_code=413)
+        return await call_next(request)
+
     def get_job(job_id: str, user: CurrentUser = Depends(current_user)) -> Job:
         job = manager.jobs.get(job_id)
         # Someone else's recording is indistinguishable from a missing one.
@@ -161,12 +174,13 @@ def create_app(jobs_dir: Path = DEFAULT_JOBS_DIR, pipeline=None, start_worker: b
         return {"status": "ok", "database": True}
 
     @app.get("/api/config", tags=["Служебное"], summary="Настройки для формы загрузки",
-             description="Доступность провайдеров, включённые типы summary и значения по "
-                         "умолчанию.", responses=UNAUTHORIZED)
+             description="Доступность провайдеров, включённые типы summary, значения по "
+                         "умолчанию и предельный размер файла.", responses=UNAUTHORIZED)
     def config(user: CurrentUser = Depends(current_user)):
         return {"providers": pipeline.provider_status(settings.llm_config()),
                 "summary_types": types.public_list(),
-                "defaults": {"provider": "auto", "summary": True, "summary_type": "auto"}}
+                "defaults": {"provider": "auto", "summary": True, "summary_type": "auto"},
+                "max_upload_bytes": MAX_UPLOAD_BYTES}
 
     @app.get("/api/jobs", tags=["Записи"], summary="Список записей",
              description="Записи текущего пользователя, новые первыми.", responses=UNAUTHORIZED)
@@ -179,6 +193,7 @@ def create_app(jobs_dir: Path = DEFAULT_JOBS_DIR, pipeline=None, start_worker: b
                           "`GET /api/jobs/{job_id}/events`.",
               response_model=JobCreated,
               responses={**UNAUTHORIZED,
+                         413: error(f"Файл больше {MAX_UPLOAD_BYTES // 1024**3} ГБ"),
                          415: error("Файл не читается как аудио или видео"),
                          422: error("Неизвестный провайдер или тип summary")})
     def create_job(file: UploadFile = File(..., description="Аудио или видео"),
@@ -191,6 +206,8 @@ def create_app(jobs_dir: Path = DEFAULT_JOBS_DIR, pipeline=None, start_worker: b
             job = manager.create(user.id, file.filename or "запись", file.file,
                                  {"provider": provider, "summary": summary,
                                   "summary_type": summary_type})
+        except UploadTooLarge as e:
+            raise HTTPException(413, str(e)) from None
         except ValueError as e:
             raise HTTPException(415, str(e)) from None
         return {"id": job.id}
@@ -353,11 +370,18 @@ def create_app(jobs_dir: Path = DEFAULT_JOBS_DIR, pipeline=None, start_worker: b
             return {j.id: j.summary_version_id for j in manager.for_user(user.id)}
 
         async def stream():
+            seen = manager.revision
             known, known_versions = snapshot(), versions()
             yield _sse("snapshot", {"jobs": list(known.values())})
             beat = time.monotonic()
             while not stopping.is_set() and not await request.is_disconnected():
                 await asyncio.sleep(0.5)
+                if time.monotonic() - beat > 15:
+                    beat = time.monotonic()
+                    yield ": ping\n\n"
+                if manager.revision == seen:
+                    continue
+                seen = manager.revision
                 current, current_versions = snapshot(), versions()
                 for job_id in known.keys() - current.keys():
                     yield _sse("job_deleted", {"id": job_id})
@@ -369,9 +393,6 @@ def create_app(jobs_dir: Path = DEFAULT_JOBS_DIR, pipeline=None, start_worker: b
                         yield _sse("summary_changed", {"id": job_id,
                                                        "summary_version_id": version_id})
                 known, known_versions = current, current_versions
-                if time.monotonic() - beat > 15:
-                    beat = time.monotonic()
-                    yield ": ping\n\n"
 
         return StreamingResponse(stream(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

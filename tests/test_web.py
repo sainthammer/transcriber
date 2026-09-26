@@ -50,7 +50,7 @@ class FakePipeline:
         return "ollama" if provider == "auto" else provider
 
     def summarize(self, transcript, provider, summary_type, *, config, registry, on_usage,
-                  instructions=None):
+                  instructions=None, should_stop=None):
         self.summarized_with.append((provider, summary_type))
         self.instructions.append(instructions)
         self.configs.append(config)
@@ -311,6 +311,18 @@ def test_rejects_unreadable_file(make_client, tmp_path):
     assert resp.status_code == 415
     assert resp.json()["detail"].startswith("Не удалось прочитать файл")
     assert not any((tmp_path / "jobs").iterdir())
+
+
+def test_upload_size_limit(make_client, monkeypatch, tmp_path):
+    from transcriber.server import jobs
+    monkeypatch.setattr(jobs, "MAX_UPLOAD_BYTES", 4)
+    client = make_client()
+    resp = client.post("/api/jobs", files={"file": ("big.wav", b"RIFF....", "audio/wav")},
+                       data={"provider": "auto", "summary": "true"})
+    assert resp.status_code == 413
+    assert not any((tmp_path / "jobs").iterdir())
+    # The form checks the size before uploading.
+    assert client.get("/api/config").json()["max_upload_bytes"] == 2 * 1024**3
 
 
 def test_unknown_provider_or_type_rejected(make_client):
