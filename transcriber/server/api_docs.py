@@ -18,7 +18,7 @@ TITLE = "Транскрибация — API"
 
 DESCRIPTION = """
 API веб-интерфейса транскрибации: запись встречи → расшифровка (faster-whisper) →
-структурированное summary (DeepSeek или локальная модель в Ollama) → экспорт.
+структурированное summary (DeepSeek, YandexGPT или локальная модель в Ollama) → экспорт.
 
 ## Вход
 

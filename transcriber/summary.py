@@ -1,4 +1,5 @@
-"""Structured meeting summary via DeepSeek API or a local Ollama model."""
+"""Structured meeting summary via DeepSeek API, YandexGPT (Yandex AI Studio) or a local
+Ollama model."""
 
 import argparse
 import json
@@ -15,7 +16,8 @@ from typing import Literal
 
 import httpx
 from dotenv import load_dotenv
-from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI, Timeout
+from openai import (APIConnectionError, APIStatusError, APITimeoutError, AuthenticationError,
+                    BadRequestError, NotFoundError, OpenAI, PermissionDeniedError, Timeout)
 from pydantic import ValidationError, create_model
 from tqdm import tqdm
 
@@ -23,7 +25,7 @@ from .docx_export import save_docx
 from .log import CLI_DEFAULT, setup_logging
 from .summary_types import DEFAULT_REGISTRY, TYPES, Registry, SummaryBase, transcript_duration
 
-PROVIDERS = ("auto", "deepseek", "ollama")
+PROVIDERS = ("auto", "deepseek", "ollama", "yandex")
 SUMMARY_TYPES = ("auto", *TYPES)
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
@@ -38,6 +40,23 @@ DEEPSEEK_MAX_TOKENS = 32768
 # at ~20 minutes instead of ~30 for the single server worker.
 DEEPSEEK_TIMEOUT = Timeout(600, connect=10)
 DEEPSEEK_MAX_RETRIES = 1
+
+YANDEX_BASE_URL = "https://llm.api.cloud.yandex.net/v1"
+# Short name (+ version) inside the folder; the request goes to gpt://<folder_id>/<model>.
+# yandexgpt = YandexGPT Pro (the latest release); yandexgpt-lite is cheaper and weaker.
+# The folder also offers aliceai-llm, qwen3-235b-a22b-fp8, gpt-oss-120b, gemma-3-27b-it...
+YANDEX_DEFAULT_MODEL = "yandexgpt/latest"
+# YandexGPT Pro/Lite take 32k tokens of prompt + reply. Other models in the folder (Qwen3,
+# gpt-oss) take more: raise YANDEX_MAX_CONTEXT for them. Checked before sending with the
+# same deliberately high estimate as for Ollama (CHARS_PER_TOKEN), so the error is a clear
+# Russian message instead of an API 400.
+YANDEX_DEFAULT_MAX_CONTEXT = 32768
+# Not streamed and, unlike DeepSeek, no keep-alive while generating: the read timeout
+# covers the whole reply. 8k output tokens at a slow ~30 tok/s is ~4.5 minutes; 10 minutes
+# also leaves room for reasoning models picked via YANDEX_MODEL. One SDK retry, as for
+# DeepSeek, absorbs a transient 429/5xx.
+YANDEX_TIMEOUT = Timeout(600, connect=10)
+YANDEX_MAX_RETRIES = 1
 
 OLLAMA_DEFAULT_HOST = "http://localhost:11434"
 OLLAMA_DEFAULT_MODEL = "qwen3.5:4b"
@@ -89,6 +108,10 @@ class LLMConfig:
     ollama_host: str = OLLAMA_DEFAULT_HOST
     ollama_model: str = OLLAMA_DEFAULT_MODEL
     ollama_max_context: int = OLLAMA_DEFAULT_MAX_CONTEXT
+    yandex_api_key: str | None = None
+    yandex_folder_id: str | None = None
+    yandex_model: str = YANDEX_DEFAULT_MODEL
+    yandex_max_context: int = YANDEX_DEFAULT_MAX_CONTEXT
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
@@ -99,6 +122,10 @@ class LLMConfig:
             ollama_host=os.getenv("OLLAMA_HOST", OLLAMA_DEFAULT_HOST),
             ollama_model=os.getenv("OLLAMA_MODEL", OLLAMA_DEFAULT_MODEL),
             ollama_max_context=int(os.getenv("OLLAMA_MAX_CONTEXT", OLLAMA_DEFAULT_MAX_CONTEXT)),
+            yandex_api_key=os.getenv("YANDEX_API_KEY") or None,
+            yandex_folder_id=os.getenv("YANDEX_FOLDER_ID") or None,
+            yandex_model=os.getenv("YANDEX_MODEL") or YANDEX_DEFAULT_MODEL,
+            yandex_max_context=int(os.getenv("YANDEX_MAX_CONTEXT", YANDEX_DEFAULT_MAX_CONTEXT)),
         )
 
 
@@ -106,7 +133,7 @@ class LLMConfig:
 class Usage:
     """Tokens spent by one model request (retries and classification count separately)."""
 
-    provider: str  # "deepseek" | "ollama"
+    provider: str  # "deepseek" | "ollama" | "yandex"
     model: str
     kind: str  # "classify" | "summary"
     prompt_tokens: int
@@ -204,26 +231,129 @@ def _chat_deepseek(messages: list[dict], model: str | None, schema: dict,
     model = model or config.deepseek_model
     client = OpenAI(api_key=config.deepseek_api_key, base_url=DEEPSEEK_BASE_URL,
                     timeout=DEEPSEEK_TIMEOUT, max_retries=DEEPSEEK_MAX_RETRIES)
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            # JSON mode doesn't take a schema; it's already spelled out in the system prompt.
-            response_format={"type": "json_object"},
-            max_tokens=DEEPSEEK_MAX_TOKENS,
-            temperature=DEEPSEEK_TEMPERATURE,
-        )
-    except APITimeoutError:
-        raise LLMTimeout(f"DeepSeek не ответил за {DEEPSEEK_TIMEOUT.read:.0f} с "
-                         f"(попыток: {DEEPSEEK_MAX_RETRIES + 1})") from None
-    except APIConnectionError:
-        raise RuntimeError("не удалось подключиться к DeepSeek API") from None
+    response = _openai_create(
+        client, "DeepSeek", DEEPSEEK_TIMEOUT, DEEPSEEK_MAX_RETRIES,
+        model=model,
+        messages=messages,
+        # JSON mode doesn't take a schema; it's already spelled out in the system prompt.
+        response_format={"type": "json_object"},
+        max_tokens=DEEPSEEK_MAX_TOKENS,
+        temperature=DEEPSEEK_TEMPERATURE,
+    )
     choice = response.choices[0]
     if choice.finish_reason == "length":
         raise RuntimeError(f"ответ DeepSeek обрезан на {DEEPSEEK_MAX_TOKENS} токенах")
     usage = response.usage and Usage("deepseek", model, "", response.usage.prompt_tokens,
                                      response.usage.completion_tokens, choice.finish_reason)
     return choice.message.content or "", usage
+
+
+def _openai_create(client: OpenAI, label: str, timeout: Timeout, retries: int, **request):
+    """chat.completions.create with transport errors turned into short Russian ones
+    (no request or reply text in them)."""
+    try:
+        return client.chat.completions.create(**request)
+    except APITimeoutError:  # before APIConnectionError: it's a subclass
+        raise LLMTimeout(f"{label} не ответил за {timeout.read:.0f} с "
+                         f"(попыток: {retries + 1})") from None
+    except APIConnectionError:
+        raise RuntimeError(f"не удалось подключиться к {label} API") from None
+
+
+def yandex_model_uri(config: LLMConfig, model: str | None = None) -> str:
+    """gpt://<folder_id>/<name>/<version> from a short name ("yandexgpt-lite",
+    "yandexgpt/rc"); a full URI is taken as is. Same rule as the Yandex AI Studio SDK."""
+    model = (model or config.yandex_model).strip()
+    if "://" in model:
+        return model
+    if "/" not in model:
+        model += "/latest"
+    return f"gpt://{config.yandex_folder_id}/{model}"
+
+
+def _yandex_model_name(uri: str) -> str:
+    """The model without the folder ID, for usage records and logs."""
+    return uri.split("://", 1)[1].split("/", 1)[-1] if "://" in uri else uri
+
+
+def _yandex_client(config: LLMConfig, *, timeout: Timeout | float = YANDEX_TIMEOUT,
+                   max_retries: int = YANDEX_MAX_RETRIES) -> OpenAI:
+    if not config.yandex_api_key:
+        raise RuntimeError("не задан ключ Yandex Cloud API (YANDEX_API_KEY)")
+    if not config.yandex_folder_id:
+        raise RuntimeError("не задан ID каталога Yandex Cloud (YANDEX_FOLDER_ID)")
+    # An API key goes as "Api-Key <key>" ("Bearer" is for IAM tokens), so the SDK's own
+    # Bearer header is overridden. OpenAI-Project (project=) names the folder for /models.
+    return OpenAI(api_key=config.yandex_api_key, base_url=YANDEX_BASE_URL,
+                  project=config.yandex_folder_id,
+                  default_headers={"Authorization": f"Api-Key {config.yandex_api_key}"},
+                  timeout=timeout, max_retries=max_retries)
+
+
+def _chat_yandex(messages: list[dict], model: str | None, schema: dict,
+                 config: LLMConfig) -> tuple[str, Usage | None]:
+    """Yandex AI Studio through its OpenAI-compatible API. Returns the reply and usage."""
+    client = _yandex_client(config)
+    uri = yandex_model_uri(config, model)
+    name = _yandex_model_name(uri)
+    needed, limit = _estimate_tokens(messages), config.yandex_max_context
+    if needed > limit:
+        raise RuntimeError(f"запись слишком длинная для {name}: ~{needed} токенов вместе с "
+                           f"ответом при лимите {limit} (YANDEX_MAX_CONTEXT). Выберите DeepSeek "
+                           f"или модель Yandex с большим контекстом")
+    request = dict(model=uri, messages=messages, max_tokens=MAX_OUTPUT_TOKENS,
+                   temperature=DEEPSEEK_TEMPERATURE)
+    # Structured output: the API takes an OpenAI json_schema (a name is required). Not
+    # every model or schema construct is supported, so a 400 falls back to plain JSON mode;
+    # the schema is in the system prompt anyway and the reply is validated by pydantic.
+    formats = [{"type": "json_schema", "json_schema": {"name": "answer", "schema": schema}},
+               {"type": "json_object"}]
+    label = "Yandex AI Studio"
+    for response_format in formats:
+        try:
+            response = _openai_create(client, label, YANDEX_TIMEOUT, YANDEX_MAX_RETRIES,
+                                      response_format=response_format, **request)
+            break
+        except BadRequestError:
+            if response_format["type"] != "json_schema":
+                raise
+            log.warning("Yandex: json_schema rejected (HTTP 400) for model=%s, "
+                        "retrying in json_object mode", name)
+        except AuthenticationError:
+            raise RuntimeError(f"{label}: ключ API не подошёл (HTTP 401)") from None
+        except PermissionDeniedError:
+            raise RuntimeError(f"{label}: нет доступа к {name} (HTTP 403) — проверьте ID "
+                               f"каталога и роль ai.languageModels.user у сервисного "
+                               f"аккаунта ключа") from None
+        except NotFoundError:
+            raise RuntimeError(f"{label}: модель {name} не найдена (HTTP 404)") from None
+    choice = response.choices[0]
+    if choice.finish_reason == "length":
+        raise RuntimeError(f"ответ {label} обрезан на {MAX_OUTPUT_TOKENS} токенах")
+    if choice.finish_reason == "content_filter":
+        raise RuntimeError(f"{label} отказался отвечать: сработал фильтр содержимого. "
+                           f"Попробуйте DeepSeek или локальную модель")
+    usage = response.usage and Usage("yandex", name, "", response.usage.prompt_tokens,
+                                     response.usage.completion_tokens, choice.finish_reason)
+    return choice.message.content or "", usage
+
+
+def check_yandex(config: LLMConfig) -> str:
+    """Validate the key and folder with a free request (the folder's model list)."""
+    client = _yandex_client(config, timeout=15, max_retries=0)
+    uri = yandex_model_uri(config)
+    try:
+        models = [m.id for m in client.models.list()]
+    except AuthenticationError:
+        raise RuntimeError("ключ API не подошёл") from None
+    except PermissionDeniedError:
+        raise RuntimeError("нет доступа к каталогу — проверьте ID каталога и роль "
+                           "ai.languageModels.user у сервисного аккаунта") from None
+    name = _yandex_model_name(uri)
+    if uri not in models:
+        available = sorted(_yandex_model_name(m) for m in models if m.startswith("gpt://"))
+        return f"Ключ работает, но модели {name} нет. Доступны: {', '.join(available)}"
+    return f"Ключ работает, модель {name} доступна"
 
 
 def _ollama_host(config: LLMConfig) -> str:
@@ -392,6 +522,8 @@ def provider_status(config: LLMConfig | None = None) -> dict:
     The Ollama check is cached for OLLAMA_STATUS_TTL seconds."""
     config = config or LLMConfig.from_env()
     ollama_reason = _ollama_status(config)
+    yandex_reason = ("no_api_key" if not config.yandex_api_key
+                     else "no_folder_id" if not config.yandex_folder_id else None)
     return {
         "deepseek": {
             "available": bool(config.deepseek_api_key),
@@ -400,6 +532,11 @@ def provider_status(config: LLMConfig | None = None) -> dict:
         },
         "ollama": {"available": ollama_reason is None, "reason": ollama_reason,
                    "model": config.ollama_model},
+        "yandex": {
+            "available": yandex_reason is None,
+            "reason": yandex_reason,
+            "model": config.yandex_model,
+        },
     }
 
 
@@ -450,11 +587,13 @@ def _chat(provider: str, kind: str, on_usage: UsageCallback | None, messages: li
           model: str | None, schema: dict, config: LLMConfig, *, attempt: int = 1,
           should_stop: StopCallback | None = None) -> str:
     _check_stop(should_stop)
-    chat = _chat_ollama if provider == "ollama" else _chat_deepseek
-    # DeepSeek isn't streamed, so it's only checked around the request. Passed only when
-    # set, so _chat_* stubs with the plain (messages, model, schema, config) signature work.
+    chat = {"ollama": _chat_ollama, "yandex": _chat_yandex}.get(provider, _chat_deepseek)
+    # DeepSeek and Yandex aren't streamed, so they're only checked around the request. Passed
+    # only when set, so _chat_* stubs with the plain (messages, model, schema, config)
+    # signature work.
     stop_kw = {"should_stop": should_stop} if provider == "ollama" and should_stop else {}
-    model_name = model or (config.ollama_model if provider == "ollama" else config.deepseek_model)
+    model_name = model or {"ollama": config.ollama_model,
+                           "yandex": config.yandex_model}.get(provider, config.deepseek_model)
     chars = _prompt_chars(messages)
     extra = f" num_ctx={_ollama_num_ctx(messages)}" if provider == "ollama" else ""
     log.info("LLM request: provider=%s model=%s kind=%s attempt=%d prompt_chars=%d "
@@ -515,7 +654,8 @@ def summarize(transcript: str, provider: str = "auto", model: str | None = None,
               on_usage: UsageCallback | None = None,
               instructions: str | None = None,
               should_stop: StopCallback | None = None) -> SummaryBase:
-    """provider: "auto" runs locally if the transcript fits the local model, else DeepSeek.
+    """provider: "auto" runs locally if the transcript fits the local model, else DeepSeek;
+    "yandex" is only used when chosen explicitly.
     summary_type: a registry type, or "auto" to detect it with a short extra request.
     on_usage is called with the tokens of every model request.
     instructions: the user's wishes for this summary, sent after the transcript and ranked
@@ -539,7 +679,7 @@ def summarize(transcript: str, provider: str = "auto", model: str | None = None,
     for attempt in range(1, MAX_ATTEMPTS + 1):
         raw = _chat(provider, "summary", on_usage, messages, model, schema, config,
                     attempt=attempt, should_stop=should_stop)
-        # A DeepSeek request can't be interrupted: drop its result if cancelled meanwhile.
+        # A DeepSeek/Yandex request can't be interrupted: drop its result if cancelled meanwhile.
         _check_stop(should_stop)
         try:
             result = _parse(raw, summary_type, registry)
@@ -585,9 +725,11 @@ def main():
     parser.add_argument("-o", "--output", help="куда сохранить (по умолчанию <файл>.summary.md)")
     parser.add_argument("-p", "--provider", choices=PROVIDERS, default="auto",
                         help="auto (локально, если влезает в контекст, иначе DeepSeek), "
-                             "deepseek (API) или ollama (локальная модель)")
-    parser.add_argument("--model", help=f"модель для -p deepseek/ollama (по умолчанию "
-                                         f"{DEEPSEEK_DEFAULT_MODEL} / {OLLAMA_DEFAULT_MODEL})")
+                             "deepseek (API), ollama (локальная модель) или yandex "
+                             "(YandexGPT в Yandex Cloud)")
+    parser.add_argument("--model", help=f"модель для -p deepseek/ollama/yandex (по умолчанию "
+                                         f"{DEEPSEEK_DEFAULT_MODEL} / {OLLAMA_DEFAULT_MODEL} / "
+                                         f"{YANDEX_DEFAULT_MODEL})")
     parser.add_argument("-t", "--type", choices=SUMMARY_TYPES, default="auto", dest="summary_type",
                         help="тип записи: "
                              + ", ".join(f"{t.id} — {t.label}" for t in TYPES.values())
@@ -598,7 +740,7 @@ def main():
     args = parser.parse_args()
     setup_logging(CLI_DEFAULT)
     if args.model and args.provider == "auto":
-        parser.error("--model задаётся вместе с -p deepseek или -p ollama "
+        parser.error("--model задаётся вместе с -p deepseek, -p ollama или -p yandex "
                      "(для auto используйте DEEPSEEK_MODEL / OLLAMA_MODEL в .env)")
 
     src = Path(args.transcript)

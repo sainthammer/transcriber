@@ -11,6 +11,7 @@ from sqlalchemy import select
 from transcriber.server import create_app
 from transcriber.server.db import Setting, SummaryVersion
 from transcriber.server.jobs import SUMMARY_VERSIONS_LIMIT
+from transcriber import summary as summary_mod
 from transcriber.summary import Usage
 
 from test_summary_types import make_data
@@ -588,6 +589,53 @@ def test_settings_precedence_and_encrypted_key(make_client):
     for bad in ({"ollama_max_context": "много"}, {"ollama_max_context": 10},
                 {"whisper_language": "русский"}, {"nope": 1}):
         assert admin.put("/api/admin/settings", json=bad).status_code == 422, bad
+
+
+def test_yandex_settings(make_client, monkeypatch):
+    pipeline = FakePipeline()
+    admin = make_client(pipeline, env={"YANDEX_FOLDER_ID": "b1gfolder123"})
+    items = {i["key"]: i for i in admin.get("/api/admin/settings").json()["items"]}
+    assert {k: items[k]["group"] for k in items if k.startswith("yandex_")} == {
+        "yandex_api_key": "yandex", "yandex_folder_id": "yandex", "yandex_model": "yandex",
+        "yandex_max_context": "yandex"}
+    assert items["yandex_api_key"]["secret"] and items["yandex_api_key"]["value"] is None
+    assert items["yandex_folder_id"]["value"] == "b1gfolder123"
+    assert items["yandex_folder_id"]["source"] == "env"
+    assert items["yandex_model"]["value"] == "yandexgpt/latest"
+    assert items["yandex_max_context"]["value"] == 32768
+
+    resp = admin.put("/api/admin/settings", json={"yandex_api_key": "AQVN1234567890secret",
+                                                  "yandex_model": "yandexgpt-lite/latest",
+                                                  "yandex_max_context": "65536"})
+    items = {i["key"]: i for i in resp.json()["items"]}
+    assert items["yandex_api_key"]["value"] == "AQV…cret"
+    assert "1234567890" not in resp.text
+    with admin.app.state.sessions() as db:
+        stored = db.scalar(select(Setting.value).where(Setting.key == "yandex_api_key"))
+    assert "1234567890" not in stored  # encrypted at rest
+
+    admin.get("/api/config")
+    config = pipeline.configs[-1]
+    assert (config.yandex_api_key, config.yandex_folder_id, config.yandex_model,
+            config.yandex_max_context) == ("AQVN1234567890secret", "b1gfolder123",
+                                           "yandexgpt-lite/latest", 65536)
+
+    for bad in ({"yandex_folder_id": "B1G folder"}, {"yandex_model": "yandex gpt"},
+                {"yandex_max_context": "много"}):
+        assert admin.put("/api/admin/settings", json=bad).status_code == 422, bad
+
+    monkeypatch.setattr(summary_mod, "check_yandex", lambda config: "Ключ работает")
+    resp = admin.post("/api/admin/settings/test", json={"provider": "yandex"})
+    assert resp.json() == {"ok": True, "message": "Ключ работает"}
+
+
+def test_explicit_yandex_provider(make_client):
+    pipeline = FakePipeline()
+    client = make_client(pipeline)
+    job_id = upload(client, provider="yandex", summary_type="meeting")
+    job = wait_until(client, job_id, lambda j: j["status"] == "done")
+    assert job["provider_used"] == "yandex"
+    assert pipeline.summarized_with == [("yandex", "meeting")]
 
 
 # --- admin: summary types ---

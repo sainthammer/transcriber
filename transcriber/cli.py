@@ -122,10 +122,11 @@ def main():
                         help="код языка (по умолчанию — WHISPER_LANGUAGE из .env, иначе ru); "
                              "auto — определять автоматически")
     parser.add_argument("--no-summary", action="store_true", help="не делать summary")
-    parser.add_argument("-p", "--provider", choices=("auto", "deepseek", "ollama"),
+    parser.add_argument("-p", "--provider", choices=("auto", "deepseek", "ollama", "yandex"),
                         default="auto",
                         help="чем делать summary: auto (локально, если влезает в контекст, "
-                             "иначе DeepSeek), deepseek (API) или ollama (локальная модель)")
+                             "иначе DeepSeek), deepseek (API), ollama (локальная модель) или "
+                             "yandex (YandexGPT в Yandex Cloud)")
     parser.add_argument("-t", "--type", default="auto", dest="summary_type",
                         choices=("auto", *TYPES),
                         help="тип записи для summary; auto — определить по расшифровке")
