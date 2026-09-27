@@ -31,7 +31,8 @@ DIVIDER = "E3E3E8"  # hairline rules: table row lines, the section break, the fo
 
 # (size pt, space before, space after) for `#`, `##`, `###`
 HEADINGS = {1: (25, 0, 8), 2: (15, 22, 8), 3: (12, 14, 4)}
-INLINE = re.compile(r"\*\*(.+?)\*\*|(?<!\w)_(.+?)_(?!\w)|`([^`]+)`")
+# Italic content can't start or end with "_", so model text like `__init__` stays literal.
+INLINE = re.compile(r"\*\*(.+?)\*\*|(?<!\w)_([^_\s](?:.*?[^_\s])?)_(?!\w)|`([^`]+)`")
 TABLE_SEPARATOR = re.compile(r"^\|(\s*:?-+:?\s*\|)+$")
 MARGIN = Cm(2.2)
 CONTENT_WIDTH = Cm(21) - 2 * MARGIN

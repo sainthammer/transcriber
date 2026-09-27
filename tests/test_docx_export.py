@@ -51,3 +51,39 @@ def test_underscores_inside_words_are_not_italic():
     item = doc.paragraphs[-1]
     assert item.text == "поле snake_case_name и курсив"
     assert [r.italic for r in item.runs] == [None, True]
+
+
+def test_freeform_sections_export():
+    """Free-form sections (model-chosen titles, paragraphs, points) survive the Word
+    download path: timestamps off, empty sections stripped."""
+    from transcriber.summary_types import strip_empty_sections
+
+    s = make_summary("freeform", details={"sections": [
+        {"title": "Зачем писать постмортем",
+         "paragraphs": ["Выводы по инцидентам забываются.", "Документ пишется для дежурных."],
+         "points": []},
+        {"title": "Структура", "paragraphs": ["Пять частей."],
+         "points": ["Хронология", "Причины"]},
+        {"title": "Правила", "paragraphs": [], "points": ["Владелец и срок у каждой задачи"]},
+        {"title": "Код", "paragraphs": ["Модуль __init__.py и snake_case_name"], "points": []},
+    ]}, decisions=[], open_questions=[])
+    md = strip_empty_sections(render_markdown(s, duration="~35 мин", timestamps=False))
+    doc = as_document(md)
+    paragraphs = [(p.style.name, p.text) for p in doc.paragraphs if p.text]
+
+    def body(title):
+        start = paragraphs.index(("Heading 2", title)) + 1
+        end = next(i for i in range(start, len(paragraphs)) if paragraphs[i][0] == "Heading 2")
+        return paragraphs[start:end]
+
+    assert body("Зачем писать постмортем") == [("Normal", "Выводы по инцидентам забываются."),
+                                               ("Normal", "Документ пишется для дежурных.")]
+    assert body("Структура") == [("Normal", "Пять частей."), ("List Bullet", "Хронология"),
+                                 ("List Bullet", "Причины")]
+    assert body("Правила") == [("List Bullet", "Владелец и срок у каждой задачи")]
+    assert body("Код") == [("Normal", "Модуль __init__.py и snake_case_name")]
+
+    headings = [text for style, text in paragraphs if style == "Heading 2"]
+    # Sections sit where the type's details go; empty common sections are stripped.
+    assert headings == ["Кратко", "Участники", "Ключевые цифры", "Зачем писать постмортем",
+                        "Структура", "Правила", "Код", "Задачи", "Ход обсуждения"]

@@ -16,8 +16,10 @@ import type {
   SummaryVersion,
   User,
 } from '../api/types'
+import freeformSummary from './fixtures/freeform.summary.json'
 import interviewSummary from './fixtures/interview.summary.json'
 import oneOnOneSummary from './fixtures/one_on_one.summary.json'
+import freeformText from './fixtures/freeform.txt?raw'
 import interviewText from './fixtures/interview.txt?raw'
 import oneOnOneText from './fixtures/one_on_one.txt?raw'
 
@@ -84,6 +86,7 @@ function job(
 
 const interview = parseTranscript(interviewText)
 const oneOnOne = parseTranscript(oneOnOneText)
+const freeform = parseTranscript(freeformText)
 
 // --- Summary versions: content by version id, so switching visibly changes the text ---
 
@@ -246,6 +249,26 @@ function initialJobs(): JobDetail[] {
       summary: oneOnOneSummary as Summary,
     }),
     job({
+      id: 'mock-freeform',
+      filename: 'Вебинар о постмортемах.mp4',
+      created_at: iso(1, 14, 0),
+      duration_sec: 290,
+      title: freeformSummary.title,
+      provider_used: 'deepseek',
+      options: {
+        provider: 'deepseek',
+        summary: true,
+        summary_type: 'freeform',
+      },
+      transcript: freeform,
+      progress: {
+        processed_sec: 290,
+        total_sec: 290,
+        phrases: freeform.length,
+      },
+      summary: freeformSummary as Summary,
+    }),
+    job({
       id: 'mock-summary-error',
       filename: 'Созвон с юристами.mp3',
       created_at: iso(1, 12, 15),
@@ -337,6 +360,14 @@ const configs: Record<'ok' | 'none', Config> = {
         sections: null,
         description:
           'запись, которая не подходит под другие типы: доклад, брифинг, звонок или обсуждение без строгой структуры участников и ролей',
+      },
+      {
+        id: 'freeform',
+        label: 'Свободный формат',
+        builtin: true,
+        sections: null,
+        description:
+          'запись со своей логикой содержания, которую не описать заранее заданными разделами: лекция, вебинар, подкаст, разбор темы, консультация, свободный разговор',
       },
     ],
     defaults: {

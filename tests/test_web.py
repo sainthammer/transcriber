@@ -240,7 +240,7 @@ def test_config(make_client):
     assert body["providers"]["deepseek"]["reason"] == "no_api_key"
     assert body["defaults"] == {"provider": "auto", "summary": True, "summary_type": "auto"}
     assert [t["id"] for t in body["summary_types"]] == ["client", "meeting", "interview",
-                                                         "one_on_one", "highlights"]
+                                                         "one_on_one", "highlights", "freeform"]
     assert body["summary_types"][2] == {"id": "interview", "label": "Собеседование",
                                         "description": body["summary_types"][2]["description"],
                                         "builtin": True, "sections": None}
@@ -659,7 +659,7 @@ def test_builtin_prompt_override_and_base_prompt(make_client):
 
 def test_last_enabled_type_cannot_be_disabled(make_client):
     admin = make_client()
-    for type_id in ("client", "meeting", "interview", "one_on_one"):
+    for type_id in ("client", "meeting", "interview", "one_on_one", "freeform"):
         assert admin.put(f"/api/admin/summary-types/{type_id}",
                          json={"enabled": False}).status_code == 200
     resp = admin.put("/api/admin/summary-types/highlights", json={"enabled": False})

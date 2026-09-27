@@ -2,13 +2,14 @@
 
 export type Provider = 'auto' | 'deepseek' | 'ollama'
 export type LlmProvider = Exclude<Provider, 'auto'>
-export type BuiltinTypeId = 'client' | 'meeting' | 'interview' | 'one_on_one' | 'highlights'
+export type BuiltinTypeId = 'client' | 'meeting' | 'interview' | 'one_on_one' | 'highlights' | 'freeform'
 export const BUILTIN_TYPES: readonly BuiltinTypeId[] = [
   'client',
   'meeting',
   'interview',
   'one_on_one',
   'highlights',
+  'freeform',
 ]
 /** A built-in id or the id of a type created in the admin interface. */
 export type SummaryTypeId = string
@@ -195,6 +196,17 @@ export interface HighlightsDetails {
   theses: string[]
 }
 
+/** Sections the model chose itself; empty ones are dropped on the backend. */
+export interface FreeformSection {
+  title: string
+  paragraphs: string[]
+  points: string[]
+}
+
+export interface FreeformDetails {
+  sections: FreeformSection[]
+}
+
 interface SummaryCommon {
   title: string
   tldr: string
@@ -212,6 +224,7 @@ export type BuiltinSummary =
   | (SummaryCommon & { meeting_type: 'interview'; details: InterviewDetails })
   | (SummaryCommon & { meeting_type: 'one_on_one'; details: OneOnOneDetails })
   | (SummaryCommon & { meeting_type: 'highlights'; details: HighlightsDetails })
+  | (SummaryCommon & { meeting_type: 'freeform'; details: FreeformDetails })
 
 /** A type created by an admin: `details` maps section keys to bullet points. */
 export type CustomSummary = SummaryCommon & {

@@ -7,6 +7,8 @@ import type {
   CompetencyAssessment,
   Decision,
   Figure,
+  FreeformDetails,
+  FreeformSection,
   HighlightsDetails,
   InterviewDetails,
   MeetingDetails,
@@ -218,6 +220,26 @@ function sectionsFor(s: SummaryData, defs: SectionRef[] | null): SectionDef[] {
         c.topics,
       ]
     }
+    case 'freeform': {
+      const d: FreeformDetails = s.details
+      return [
+        ...d.sections.map(
+          (sec, i): SectionDef => ({
+            id: `free-${i}`,
+            title: sec.title,
+            count: sec.paragraphs.length + sec.points.length,
+            emptyText: 'пусто',
+            body: () => <Prose section={sec} />,
+          }),
+        ),
+        c.decisions,
+        c.tasks,
+        c.figures,
+        c.questions,
+        c.participants,
+        c.topics,
+      ]
+    }
   }
 }
 
@@ -303,6 +325,18 @@ function Bullets({ items }: { items: string[] }) {
         <li key={i}>{item}</li>
       ))}
     </ul>
+  )
+}
+
+/** A free-form section: running text first, then its points. */
+function Prose({ section }: { section: FreeformSection }) {
+  return (
+    <div className={styles.prose}>
+      {section.paragraphs.map((p, i) => (
+        <p key={i}>{p}</p>
+      ))}
+      {section.points.length > 0 && <Bullets items={section.points} />}
+    </div>
   )
 }
 
