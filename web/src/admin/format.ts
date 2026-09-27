@@ -25,7 +25,7 @@ const dateOnly = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long
 export const date = (iso: string) => dateOnly.format(new Date(iso))
 
 export const providerName = (p: string | null) =>
-  p === 'deepseek' ? 'DeepSeek' : p === 'ollama' ? 'Локально' : '—'
+  p === 'deepseek' ? 'DeepSeek' : p === 'yandex' ? 'YandexGPT' : p === 'ollama' ? 'Локально' : '—'
 
 export const ROLE_LABEL = { admin: 'Администратор', user: 'Пользователь' } as const
 

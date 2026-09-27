@@ -10,7 +10,9 @@ import type {
   Config,
   JobDetail,
   JobListItem,
+  LlmProvider,
   Phrase,
+  Provider,
   StageInfo,
   Summary,
   SummaryVersion,
@@ -93,7 +95,7 @@ const freeform = parseTranscript(freeformText)
 const versionContent = new Map<number, Summary>()
 let nextVersionId = 100
 
-function variant(base: Summary, n: number, provider: 'deepseek' | 'ollama'): Summary {
+function variant(base: Summary, n: number, provider: LlmProvider): Summary {
   return n === 1
     ? base
     : {
@@ -109,7 +111,7 @@ function variant(base: Summary, n: number, provider: 'deepseek' | 'ollama'): Sum
 function versions(
   created: string,
   base: Summary,
-  list: { minutesAfter: number; provider: 'deepseek' | 'ollama'; instructions?: string }[],
+  list: { minutesAfter: number; provider: LlmProvider; instructions?: string }[],
   currentIndex = 0,
 ): { summary: Summary; summary_versions: SummaryVersion[] } {
   const total = list.length
@@ -224,7 +226,7 @@ function initialJobs(): JobDetail[] {
       transcript: interview,
       progress: { processed_sec: 260, total_sec: 260, phrases: interview.length },
       ...versions(iso(1, 15, 20), interviewSummary as Summary, [
-        { minutesAfter: 40, provider: 'deepseek', instructions: 'Короче, только решения и задачи' },
+        { minutesAfter: 40, provider: 'yandex', instructions: 'Короче, только решения и задачи' },
         { minutesAfter: 7, provider: 'deepseek' },
       ]),
     }),
@@ -319,6 +321,8 @@ const configs: Record<'ok' | 'none', Config> = {
     providers: {
       deepseek: { available: true, reason: null, model: 'DeepSeek' },
       ollama: { available: true, reason: null, model: 'Локальный ИИ' },
+      // Key set, folder id missing: the segment is shown disabled with the hint.
+      yandex: { available: false, reason: 'no_folder_id', model: 'yandexgpt/latest' },
     },
     summary_types: [
       {
@@ -388,6 +392,7 @@ configs.none = {
       model: 'deepseek-flash',
     },
     ollama: { available: false, reason: 'not_running', model: 'qwen3.5:4b' },
+    yandex: { available: false, reason: 'no_api_key', model: 'yandexgpt/latest' },
   },
 }
 
@@ -636,7 +641,7 @@ export function installMocks() {
     if (!rest) return json(j)
     if (rest === '/summary' && method === 'POST') {
       const body = JSON.parse(String(init?.body ?? '{}')) as {
-        provider: 'auto' | 'deepseek' | 'ollama'
+        provider: Provider
         summary_type: string
         instructions?: string | null
       }
@@ -653,7 +658,7 @@ export function installMocks() {
           },
           422
         )
-      const used = body.provider === 'deepseek' ? 'deepseek' : 'ollama'
+      const used: LlmProvider = body.provider === 'auto' ? 'ollama' : body.provider
       update(j.id, {
         status: 'running',
         stage: 'summarizing',

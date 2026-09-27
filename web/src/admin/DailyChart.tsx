@@ -7,9 +7,13 @@ import styles from './DailyChart.module.css'
 
 interface Day {
   date: string
-  paid: number
+  deepseek: number
+  yandex: number
   free: number
 }
+
+const empty = (date: string): Day => ({ date, deepseek: 0, yandex: 0, free: 0 })
+const total = (d: Day) => d.deepseek + d.yandex + d.free
 
 const iso = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -31,9 +35,10 @@ const parse = (date: string) => {
 function fill(to: string, days: number, daily: Usage['daily']): Day[] {
   const byDate = new Map<string, Day>()
   for (const row of daily) {
-    const day = byDate.get(row.date) ?? { date: row.date, paid: 0, free: 0 }
+    const day = byDate.get(row.date) ?? empty(row.date)
     const n = row.prompt_tokens + row.completion_tokens
-    if (row.provider === 'deepseek') day.paid += n
+    if (row.provider === 'deepseek') day.deepseek += n
+    else if (row.provider === 'yandex') day.yandex += n
     else day.free += n
     byDate.set(row.date, day)
   }
@@ -42,7 +47,7 @@ function fill(to: string, days: number, daily: Usage['daily']): Day[] {
     const d = new Date(end)
     d.setDate(end.getDate() - (days - 1 - i))
     const key = iso(d)
-    return byDate.get(key) ?? { date: key, paid: 0, free: 0 }
+    return byDate.get(key) ?? empty(key)
   })
 }
 
@@ -58,15 +63,18 @@ interface Props {
   to: string
   days: number
   daily: Usage['daily']
+  /** Show YandexGPT in the tooltip: only when the period has any. */
+  yandex: boolean
 }
 
 /**
- * Stacked columns in CSS: paid DeepSeek tokens at the base in the accent color, free local
- * tokens above in grey. Hover or arrow keys show one day's numbers.
+ * Stacked columns in CSS: paid cloud tokens at the base (DeepSeek in the accent color,
+ * YandexGPT in its lighter shade), free local tokens above in grey. Hover or arrow keys
+ * show one day's numbers.
  */
-export function DailyChart({ to, days, daily }: Props) {
+export function DailyChart({ to, days, daily, yandex }: Props) {
   const data = useMemo(() => fill(to, days, daily), [to, days, daily])
-  const max = niceMax(Math.max(...data.map((d) => d.paid + d.free)))
+  const max = niceMax(Math.max(...data.map(total)))
   const [active, setActive] = useState<number | null>(null)
   // Fewer date labels on phones so neighbours don't run into each other.
   const narrow = useMediaQuery('(max-width: 599px)')
@@ -118,8 +126,9 @@ export function DailyChart({ to, days, daily }: Props) {
             onPointerEnter={() => setActive(i)}
           >
             <div className={styles.stack}>
-              {d.paid > 0 && <span className={styles.paid} style={{ height: pct(d.paid) }} />}
-              {d.free > 0 && <span className={styles.free} style={{ height: pct(d.free) }} />}
+              {d.deepseek > 0 && <span data-provider="deepseek" style={{ height: pct(d.deepseek) }} />}
+              {d.yandex > 0 && <span data-provider="yandex" style={{ height: pct(d.yandex) }} />}
+              {d.free > 0 && <span data-provider="ollama" style={{ height: pct(d.free) }} />}
             </div>
             {i % step === 0 && (
               <span className={styles.tick} aria-hidden>
@@ -138,8 +147,14 @@ export function DailyChart({ to, days, daily }: Props) {
             <strong>{longDate.format(parse(day.date))}</strong>
             <span>
               <i data-provider="deepseek" />
-              DeepSeek <b className="tabular">{num(day.paid)}</b>
+              DeepSeek <b className="tabular">{num(day.deepseek)}</b>
             </span>
+            {yandex && (
+              <span>
+                <i data-provider="yandex" />
+                YandexGPT <b className="tabular">{num(day.yandex)}</b>
+              </span>
+            )}
             <span>
               <i data-provider="ollama" />
               Локально <b className="tabular">{num(day.free)}</b>
@@ -149,7 +164,7 @@ export function DailyChart({ to, days, daily }: Props) {
       </div>
       <p className="visually-hidden" aria-live="polite">
         {day
-          ? `${longDate.format(parse(day.date))}: DeepSeek ${num(day.paid)}, локально ${num(day.free)} токенов`
+          ? `${longDate.format(parse(day.date))}: DeepSeek ${num(day.deepseek)}${yandex ? `, YandexGPT ${num(day.yandex)}` : ''}, локально ${num(day.free)} токенов`
           : ''}
       </p>
     </div>

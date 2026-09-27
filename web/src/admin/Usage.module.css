@@ -54,6 +54,10 @@
   background: var(--paid);
 }
 
+.swatch[data-provider="yandex"] {
+  background: var(--paid-alt);
+}
+
 .swatch[data-provider="ollama"] {
   background: var(--free);
 }
@@ -88,6 +92,10 @@
 
 .share > span[data-provider="deepseek"] {
   background: var(--paid);
+}
+
+.share > span[data-provider="yandex"] {
+  background: var(--paid-alt);
 }
 
 .share > span[data-provider="ollama"] {
@@ -184,6 +192,10 @@
 
 .matrix td[data-provider="deepseek"]::before {
   background: var(--paid);
+}
+
+.matrix td[data-provider="yandex"]::before {
+  background: var(--paid-alt);
 }
 
 .matrix td[data-provider="ollama"]::before {

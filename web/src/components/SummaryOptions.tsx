@@ -2,7 +2,7 @@ import { useId } from 'react'
 import { ChevronDown, ShieldCheck } from 'lucide-react'
 import type { Config, Provider, SummaryTypeChoice } from '../api/types'
 import { capitalize } from '../lib/format'
-import { joinOr, PRIVATE_TYPES, providerReason } from '../lib/providers'
+import { isCloud, joinOr, offersYandex, PRIVATE_TYPES, providerReason } from '../lib/providers'
 import { useAuth } from '../state/authContext'
 import styles from './forms.module.css'
 
@@ -23,7 +23,8 @@ export function SummaryOptions({
 }: Props) {
   const id = useId()
   const { isAdmin } = useAuth()
-  const { deepseek, ollama } = config.providers
+  const { deepseek, ollama, yandex } = config.providers
+  const showYandex = offersYandex(config)
   const type = config.summary_types.find((t) => t.id === summaryType)
   const builtin = config.summary_types.filter((t) => t.builtin !== false)
   const custom = config.summary_types.filter((t) => t.builtin === false)
@@ -41,21 +42,23 @@ export function SummaryOptions({
     },
     { value: 'ollama', label: 'Локально', available: ollama.available },
     { value: 'deepseek', label: 'DeepSeek', available: deepseek.available },
+    ...(showYandex ? [{ value: 'yandex' as const, label: 'Yandex', available: yandex.available }] : []),
   ]
 
   const explanation = {
     auto: 'Локально, если запись не очень большая, иначе DeepSeek.',
     ollama: `Качество ниже, но запись никуда не уходит.`,
     deepseek: 'Точнее, но запись отправляется на серверы DeepSeek.',
+    yandex: 'YandexGPT: запись отправляется в Yandex Cloud.',
   }[provider]
 
   const reasons = [
     ['ollama', providerReason('ollama', ollama, isAdmin)],
     ['deepseek', providerReason('deepseek', deepseek, isAdmin)],
+    ['yandex', showYandex && providerReason('yandex', yandex, isAdmin)],
   ].filter(([, r]) => r) as [string, string][]
 
-  const privateHint =
-    provider === 'deepseek' && PRIVATE_TYPES.includes(summaryType)
+  const privateHint = isCloud(provider) && PRIVATE_TYPES.includes(summaryType)
 
   return (
     <>

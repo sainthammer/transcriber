@@ -1,6 +1,6 @@
 // Mirrors transcriber/web.py and transcriber/summary_types. Keep in sync with the backend.
 
-export type Provider = 'auto' | 'deepseek' | 'ollama'
+export type Provider = 'auto' | 'deepseek' | 'ollama' | 'yandex'
 export type LlmProvider = Exclude<Provider, 'auto'>
 export type BuiltinTypeId = 'client' | 'meeting' | 'interview' | 'one_on_one' | 'highlights' | 'freeform'
 export const BUILTIN_TYPES: readonly BuiltinTypeId[] = [
@@ -21,7 +21,7 @@ export type StageStatus = 'pending' | 'running' | 'done' | 'skipped' | 'error'
 
 export interface ProviderInfo {
   available: boolean
-  reason: 'no_api_key' | 'not_running' | 'model_missing' | null
+  reason: 'no_api_key' | 'no_folder_id' | 'not_running' | 'model_missing' | null
   model: string
 }
 
@@ -40,7 +40,7 @@ export interface SummaryTypeInfo {
 }
 
 export interface Config {
-  providers: { deepseek: ProviderInfo; ollama: ProviderInfo }
+  providers: { deepseek: ProviderInfo; ollama: ProviderInfo; yandex: ProviderInfo }
   summary_types: SummaryTypeInfo[]
   defaults: {
     provider: Provider
@@ -256,6 +256,10 @@ export type SettingKey =
   | 'ollama_host'
   | 'ollama_model'
   | 'ollama_max_context'
+  | 'yandex_api_key'
+  | 'yandex_folder_id'
+  | 'yandex_model'
+  | 'yandex_max_context'
   | 'whisper_language'
 
 export type SettingSource = 'db' | 'env' | 'default'
@@ -263,7 +267,7 @@ export type SettingSource = 'db' | 'env' | 'default'
 export interface SettingItem {
   key: SettingKey
   label: string
-  group: 'deepseek' | 'ollama' | 'whisper'
+  group: 'deepseek' | 'ollama' | 'yandex' | 'whisper'
   /** For a secret: a mask like "sk-…a1b2", or null when not set. */
   value: string | number | null
   secret: boolean
