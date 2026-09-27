@@ -2,7 +2,7 @@
 # Written for the GNU make 3.81 that ships with macOS.
 
 .DEFAULT_GOAL := help
-.PHONY: help install test transcribe summarize model db web dev build lint screenshots \
+.PHONY: help install test transcribe summarize model db web dev build lint screenshots docx-preview \
 	up rebuild down logs ps users migration
 
 FILE ?=
@@ -59,6 +59,9 @@ lint: ## Линтер Python и интерфейса
 
 screenshots: ## Скриншоты интерфейса в web/.screenshots/
 	cd web && npm run screenshots
+
+docx-preview: ## Word-версии summary всех типов и их страницы в PNG: [ARGS="--label before"]
+	uv run python scripts/docx_preview.py $(ARGS)
 
 migration: ## Новая миграция после изменения server/db.py: MSG="..."
 	@test -n "$(MSG)" || (echo "Укажите описание: make migration MSG=\"…\"" && exit 1)

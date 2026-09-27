@@ -87,3 +87,19 @@ def test_freeform_sections_export():
     # Sections sit where the type's details go; empty common sections are stripped.
     assert headings == ["Кратко", "Участники", "Ключевые цифры", "Зачем писать постмортем",
                         "Структура", "Правила", "Код", "Задачи", "Ход обсуждения"]
+
+
+def test_print_layout():
+    """Rows never split across pages, the header row repeats, the footer numbers pages."""
+    from docx.oxml.ns import qn
+
+    doc = as_document(render_markdown(make_summary("client"), duration="~35 мин"))
+    for table in doc.tables:
+        rows = [row._tr.trPr for row in table.rows]
+        assert all(pr is not None and pr.find(qn("w:cantSplit")) is not None for pr in rows)
+        assert rows[0].find(qn("w:tblHeader")) is not None
+
+    footer = doc.sections[0].footer.paragraphs[0]
+    assert footer.text.startswith("Пилот ИИ-аналитики\t")
+    fields = [t.text for t in footer._p.iter(qn("w:instrText"))]
+    assert fields == ["PAGE", "NUMPAGES"]

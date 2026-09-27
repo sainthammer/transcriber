@@ -48,6 +48,9 @@ web/.screenshots/
 web/test-results/
 web/playwright-report/
 
+# Word export previews (scripts/docx_preview.py)
+.docx-preview/
+
 # macOS
 .DS_Store
 
