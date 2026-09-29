@@ -53,7 +53,8 @@ DOWNLOADS = {
 DOCX_NAMES = {"summary.docx", "digest.docx"}
 
 
-PROVIDER_HELP = "`auto`, `deepseek` или `ollama`; `auto` выбирает по размеру расшифровки"
+PROVIDER_HELP = ("`auto`, `deepseek`, `ollama` или `yandex`; `auto` выбирает между `ollama` и "
+                 "`deepseek` по размеру расшифровки")
 SUMMARY_TYPE_HELP = "id типа из `GET /api/config` или `auto` — модель определит сама"
 # Room for a paragraph of wishes; the prompt (and Ollama's num_ctx) grows with them.
 MAX_INSTRUCTIONS = 2000

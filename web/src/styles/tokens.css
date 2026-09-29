@@ -92,8 +92,10 @@
   --segment-shadow: 0 1px 2px rgb(0 0 0 / 0.08), 0 0 0 0.5px rgb(0 0 0 / 0.06);
   --danger-soft: rgb(196 49 42 / 0.1);
   --danger-solid: #c4312a; /* background under white text */
-  /* Usage: paid cloud tokens use the accent, free local tokens a neutral grey. */
+  /* Usage: paid cloud tokens use the accent (DeepSeek) and its lighter shade (YandexGPT),
+     free local tokens a neutral grey. */
   --paid: #0b6bcb;
+  --paid-alt: #6aa6e6;
   --free: #b4b4bb;
 }
 
@@ -129,6 +131,7 @@
     --danger-soft: rgb(255 107 97 / 0.14);
     --danger-solid: #d93a31;
     --paid: #3d8fea;
+    --paid-alt: #a3cbf7;
     --free: #5c5c63;
   }
 }

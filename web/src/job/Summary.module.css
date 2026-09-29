@@ -154,6 +154,20 @@
   background: var(--text-tertiary);
 }
 
+/* Free-form sections: paragraphs read as text — spaced like prose, not like list rows. */
+.prose {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.prose p {
+  text-wrap: pretty;
+}
+
+.prose p + .bullets {
+  margin-top: var(--space-1);
+}
+
 /* Rows that start with a timestamp: decisions, tasks, topics, competencies. */
 .timed {
   display: grid;

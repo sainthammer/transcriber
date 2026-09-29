@@ -27,6 +27,10 @@ cp .env.example .env
 | `OLLAMA_HOST` | `http://localhost:11434` | адрес Ollama |
 | `OLLAMA_MODEL` | `qwen3.5:4b` | локальная модель |
 | `OLLAMA_MAX_CONTEXT` | `32768` | до скольки токенов считать локально в режиме `auto` |
+| `YANDEX_API_KEY` | — | API-ключ сервисного аккаунта Yandex Cloud (роль `ai.languageModels.user`) |
+| `YANDEX_FOLDER_ID` | — | ID каталога Yandex Cloud (`b1g…`) |
+| `YANDEX_MODEL` | `yandexgpt/latest` | модель в каталоге: `yandexgpt/latest` (YandexGPT Pro), `yandexgpt-lite/latest`, `aliceai-llm/latest`… или полный URI `gpt://…` |
+| `YANDEX_MAX_CONTEXT` | `32768` | контекст модели Yandex в токенах; длиннее — ошибка до запроса |
 | `LOG_LEVEL` | CLI — выкл., сервер — `INFO` | журнал работы моделей (`DEBUG`, `INFO`, `WARNING`, `ERROR`), см. «Журнал работы моделей» |
 
 Для локального summary нужен запущенный [Ollama](https://ollama.com) со скачанной моделью (`ollama pull qwen3.5:4b`).
@@ -36,6 +40,14 @@ cp .env.example .env
 summary делается локально, иначе — через DeepSeek. Если Ollama не запущен или модели нет,
 тоже используется DeepSeek.
 
+YandexGPT (`-p yandex`) в `auto` не участвует — только явный выбор: его контекст (32k) не
+больше локального, так что длинные записи он не выручает, а отправлять запись второму
+облаку без просьбы пользователя не стоит. Модель вызывается через OpenAI-совместимый API
+Yandex AI Studio со структурированным выводом по JSON-схеме; если модель схему не
+принимает, запрос повторяется в обычном JSON-режиме (схема есть в промпте, ответ всё равно
+проверяется). Фильтр содержимого Yandex иногда отказывается отвечать — это ошибка с
+предложением выбрать другого провайдера.
+
 ## Запуск
 
 Записи удобно класть в `recordings/` (папка не в git), но подойдёт любой путь.
@@ -44,6 +56,7 @@ summary делается локально, иначе — через DeepSeek. �
 uv run transcribe recordings/record.mp3                # всё: распознавание, summary (auto)
 uv run transcribe recordings/record.mp3 -p ollama      # summary только локальной моделью
 uv run transcribe recordings/record.mp3 -p deepseek    # summary только через DeepSeek
+uv run transcribe recordings/record.mp3 -p yandex      # summary через YandexGPT (Yandex Cloud)
 uv run transcribe recordings/record.mp3 --no-summary   # без summary
 uv run transcribe recordings/record.mp3 --language en  # распознавание на другом языке (по умолчанию — .env, иначе ru)
 uv run transcribe recordings/record.mp3 -o out/meeting.txt  # другое место для результатов
@@ -118,7 +131,7 @@ uv run transcriber-admin list-users
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME` | — | первый администратор (если пользователей нет) |
 | `COOKIE_SECURE` | — | `1`, если интерфейс открыт по HTTPS |
 
-Настройки из админки (ключ DeepSeek, модели, адрес Ollama, язык распознавания) перекрывают
+Настройки из админки (ключи DeepSeek и Yandex Cloud, каталог Yandex, модели, адрес Ollama, язык распознавания) перекрывают
 `.env`, а если их сбросить, снова действует `.env`. Ключи API хранятся в базе
 зашифрованными ключом `SECRET_KEY`. Команды `transcribe` и `summarize` базу не используют и
 берут настройки только из `.env`.
@@ -255,7 +268,7 @@ Markdown. Общие правила — в `base.md` и `base.py`. Правил�
 | Файл | Что внутри |
 |---|---|
 | `transcriber/cli.py` | команда `transcribe`: распознавание faster-whisper (с пунктуацией) → summary |
-| `transcriber/summary.py` | команда `summarize`: запросы к DeepSeek и Ollama, выбор провайдера и типа |
+| `transcriber/summary.py` | команда `summarize`: запросы к DeepSeek, YandexGPT и Ollama, выбор провайдера и типа |
 | `transcriber/summary_types/` | типы summary: общая схема и правила (`base.*`) и по паре файлов на тип |
 | `transcriber/log.py` | журнал работы моделей: `LOG_LEVEL`, формат uvicorn, id задачи сервера |
 | `transcriber/docx_export.py` | Word-версия summary: Markdown из `render_markdown` → стилизованный .docx |

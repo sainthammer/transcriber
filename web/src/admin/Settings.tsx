@@ -31,6 +31,13 @@ const GROUPS: { id: Group; title: string; description: string; test?: LlmProvide
     test: 'ollama',
   },
   {
+    id: 'yandex',
+    title: 'YandexGPT',
+    description:
+      'Облачная модель: текст расшифровки уходит в Yandex Cloud, оплата по токенам. Режим «Авто» её не выбирает — только явно. Ключ и ID каталога — у сервисного аккаунта в консоли Yandex Cloud.',
+    test: 'yandex',
+  },
+  {
     id: 'whisper',
     title: 'Распознавание речи',
     description: 'Работает локально для всех записей.',
@@ -44,6 +51,21 @@ const SOURCE: Record<SettingItem['source'], string> = {
 }
 
 const asText = (v: SettingItem['value']) => (v === null ? '' : String(v))
+
+/** Numeric settings and their bounds (the server checks them too). */
+const NUMBERS: Partial<Record<SettingKey, { min: number; max?: number; step: number }>> = {
+  ollama_max_context: { min: 2048, step: 1024 },
+  yandex_max_context: { min: 2048, max: 1_000_000, step: 1024 },
+}
+
+const isNumber = (i: SettingItem) => typeof i.default === 'number' || i.key in NUMBERS
+
+/** What the value looks like, inside an empty field that has no default to show. */
+const PLACEHOLDER: Partial<Record<SettingKey, string>> = {
+  deepseek_api_key: 'sk-…',
+  yandex_api_key: 'AQVN…',
+  yandex_folder_id: 'b1g…',
+}
 
 export function Settings() {
   const { data, error, reload, setData } = useResource('settings', admin.settings)
@@ -141,7 +163,7 @@ function GroupForm({ group, settings, onSaved, onDirty }: GroupProps) {
     const patch: SettingsPatch = {}
     for (const i of changed) {
       const v = draft[i.key].trim()
-      patch[i.key] = v === '' ? null : typeof i.default === 'number' || i.key === 'ollama_max_context' ? Number(v) : v
+      patch[i.key] = v === '' ? null : isNumber(i) ? Number(v) : v
     }
     if (await put(patch)) toast('Настройки сохранены')
   }
@@ -238,15 +260,24 @@ function GroupForm({ group, settings, onSaved, onDirty }: GroupProps) {
               <OllamaModel item={item} settings={settings} value={draft[item.key]} onChange={(v) => set(item.key, v)} />
             ) : item.key === 'whisper_language' ? (
               <Language value={draft[item.key]} onChange={(v) => set(item.key, v)} />
+            ) : isNumber(item) ? (
+              <input
+                className={`${forms.input} ${styles.input}`}
+                type="number"
+                inputMode="numeric"
+                min={NUMBERS[item.key]?.min}
+                max={NUMBERS[item.key]?.max}
+                step={NUMBERS[item.key]?.step}
+                placeholder={item.default === null ? undefined : String(item.default)}
+                value={draft[item.key]}
+                onChange={(e) => set(item.key, e.target.value)}
+              />
             ) : (
               <input
                 className={`${forms.input} ${styles.input}`}
-                data-mono={item.key !== 'ollama_max_context' || undefined}
-                type={item.key === 'ollama_max_context' ? 'number' : item.key === 'ollama_host' ? 'url' : 'text'}
-                inputMode={item.key === 'ollama_max_context' ? 'numeric' : undefined}
-                min={item.key === 'ollama_max_context' ? 2048 : undefined}
-                step={item.key === 'ollama_max_context' ? 1024 : undefined}
-                placeholder={item.default === null ? undefined : String(item.default)}
+                data-mono=""
+                type={item.key === 'ollama_host' ? 'url' : 'text'}
+                placeholder={item.default === null ? PLACEHOLDER[item.key] : String(item.default)}
                 spellCheck={false}
                 autoCapitalize="off"
                 value={draft[item.key]}
@@ -286,11 +317,11 @@ function GroupForm({ group, settings, onSaved, onDirty }: GroupProps) {
       <ConfirmDialog
         open={!!confirmDelete}
         onOpenChange={(o) => !o && setConfirmDelete(null)}
-        title="Удалить ключ DeepSeek?"
+        title={`Удалить ключ ${group.title}?`}
         description={
           confirmDelete?.default
             ? 'Будет использоваться ключ из .env.'
-            : 'Итоги через DeepSeek перестанут работать, пока не добавите новый ключ.'
+            : `Итоги через ${group.title} перестанут работать, пока не добавите новый ключ.`
         }
         confirm="Удалить"
         danger
@@ -332,7 +363,7 @@ function SecretControl({
           className={styles.input}
           data-mono=""
           autoComplete="off"
-          placeholder={item.value === null ? 'sk-…' : 'Новый ключ'}
+          placeholder={item.value === null ? PLACEHOLDER[item.key] : 'Новый ключ'}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           autoFocus={item.value !== null}

@@ -8,7 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 from ..summary import (DEEPSEEK_DEFAULT_MODEL, OLLAMA_DEFAULT_HOST, OLLAMA_DEFAULT_MAX_CONTEXT,
-                       OLLAMA_DEFAULT_MODEL, LLMConfig)
+                       OLLAMA_DEFAULT_MODEL, YANDEX_DEFAULT_MAX_CONTEXT, YANDEX_DEFAULT_MODEL,
+                       LLMConfig)
 from .db import Setting, utcnow
 from .security import SecretBox
 
@@ -19,7 +20,7 @@ BASE_PROMPT_KEY = "base_prompt"  # stored here too, edited in the summary types 
 class SettingDef:
     key: str
     label: str
-    group: str  # "deepseek" | "ollama" | "whisper"
+    group: str  # "deepseek" | "ollama" | "yandex" | "whisper"
     env: str
     default: str | int | None
     secret: bool = False
@@ -38,6 +39,17 @@ DEFS = {d.key: d for d in (
                OLLAMA_DEFAULT_MAX_CONTEXT, kind=int,
                help="До скольки токенов делать summary локально в режиме «Авто»; "
                     "длиннее — через DeepSeek"),
+    SettingDef("yandex_api_key", "Ключ API", "yandex", "YANDEX_API_KEY", None, secret=True,
+               help="API-ключ сервисного аккаунта с ролью ai.languageModels.user"),
+    SettingDef("yandex_folder_id", "ID каталога", "yandex", "YANDEX_FOLDER_ID", None,
+               help="Каталог Yandex Cloud, в котором работает модель (b1g…)"),
+    SettingDef("yandex_model", "Модель", "yandex", "YANDEX_MODEL", YANDEX_DEFAULT_MODEL,
+               help="yandexgpt/latest — YandexGPT Pro, yandexgpt-lite/latest — дешевле; "
+                    "или полный URI gpt://…"),
+    SettingDef("yandex_max_context", "Лимит контекста", "yandex", "YANDEX_MAX_CONTEXT",
+               YANDEX_DEFAULT_MAX_CONTEXT, kind=int,
+               help="Контекст модели в токенах; длиннее — понятная ошибка до запроса. "
+                    "YandexGPT — 32768"),
     SettingDef("whisper_language", "Язык распознавания", "whisper", "WHISPER_LANGUAGE", "ru",
                help="Код языка (ru, en, de…) или auto — определять автоматически"),
 )}
@@ -55,6 +67,10 @@ def _validate(d: SettingDef, raw) -> str:
         return str(number)
     if d.key == "whisper_language" and not re.fullmatch(r"auto|[a-z]{2,3}", value.lower()):
         raise ValueError("Язык: код вроде ru или en, либо auto")
+    if d.key == "yandex_folder_id" and not re.fullmatch(r"[a-z0-9]{8,64}", value):
+        raise ValueError("ID каталога: строчные латинские буквы и цифры, например b1g…")
+    if d.key == "yandex_model" and not re.fullmatch(r"[\w.:/\-]+", value):
+        raise ValueError("Модель Yandex: например yandexgpt/latest")
     if d.key == "ollama_host" and not re.fullmatch(r"(https?://)?[\w.\-]+(:\d+)?/?", value):
         raise ValueError("Адрес Ollama: например http://localhost:11434")
     if len(value) > 500:
@@ -106,7 +122,11 @@ class SettingsStore:
         return LLMConfig(deepseek_api_key=v["deepseek_api_key"] or None,
                          deepseek_model=v["deepseek_model"], ollama_host=v["ollama_host"],
                          ollama_model=v["ollama_model"],
-                         ollama_max_context=v["ollama_max_context"])
+                         ollama_max_context=v["ollama_max_context"],
+                         yandex_api_key=v["yandex_api_key"] or None,
+                         yandex_folder_id=v["yandex_folder_id"] or None,
+                         yandex_model=v["yandex_model"],
+                         yandex_max_context=v["yandex_max_context"])
 
     def whisper_language(self) -> str | None:
         """ISO code, or None to autodetect (faster-whisper's convention)."""

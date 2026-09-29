@@ -11,11 +11,12 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import client, highlights, interview, meeting, one_on_one
+from . import client, freeform, highlights, interview, meeting, one_on_one
 from .base import NONE, SummaryBase, SummaryType, bullets, cell, section, transcript_duration
 
 TYPES: dict[str, SummaryType] = {
-    t.id: t for t in (client.TYPE, meeting.TYPE, interview.TYPE, one_on_one.TYPE, highlights.TYPE)
+    t.id: t for t in (client.TYPE, meeting.TYPE, interview.TYPE, one_on_one.TYPE, highlights.TYPE,
+                     freeform.TYPE)
 }
 BASE_PROMPT = (Path(__file__).parent / "base.md").read_text(encoding="utf-8")
 # highlights is the catch-all type (no strict structure), so it's also the fallback
@@ -171,9 +172,14 @@ def strip_empty_sections(md: str) -> str:
                     if below and len(below[1]) <= level:
                         break
                     j += 1
-                body = [line for line in lines[i + 1:j] if line.strip()]
+                # A trailing `---` (the break before "Ход обсуждения") belongs to the
+                # next section: it neither fills this one nor goes away with it.
+                end = j
+                while end > i + 1 and lines[end - 1].strip() in ("", "---"):
+                    end -= 1
+                body = [line for line in lines[i + 1:end] if line.strip()]
                 if not body or body == [NONE]:
-                    i = j
+                    i = end
                     continue
             out.append(lines[i])
             i += 1

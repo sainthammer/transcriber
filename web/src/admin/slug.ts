@@ -17,4 +17,4 @@ export function slug(text: string, max = 32): string {
 export const TYPE_ID = /^[a-z][a-z0-9_]{1,31}$/
 export const SECTION_KEY = /^[a-z][a-z0-9_]{0,31}$/
 /** Words the URL scheme or the built-ins already use. */
-export const RESERVED_IDS = ['new', 'auto', 'client', 'meeting', 'interview', 'one_on_one', 'highlights']
+export const RESERVED_IDS = ['new', 'auto', 'client', 'meeting', 'interview', 'one_on_one', 'highlights', 'freeform']

@@ -39,6 +39,10 @@ const settings = {
     { key: 'ollama_host', label: 'Адрес сервера', group: 'ollama', value: 'http://127.0.0.1:11434', secret: false, source: 'db', default: 'http://localhost:11434', help: null },
     { key: 'ollama_model', label: 'Модель', group: 'ollama', value: 'qwen3.5:4b', secret: false, source: 'env', default: 'qwen3.5:4b', help: null },
     { key: 'ollama_max_context', label: 'Максимальный контекст, токенов', group: 'ollama', value: 32768, secret: false, source: 'default', default: 32768, help: 'Длинные записи, которые не помещаются, уходят в DeepSeek (в режиме «Авто»).' },
+    { key: 'yandex_api_key', label: 'Ключ API', group: 'yandex', value: 'AQVN…x7Qe', secret: true, source: 'db', default: null, help: 'API-ключ сервисного аккаунта с ролью ai.languageModels.user' },
+    { key: 'yandex_folder_id', label: 'ID каталога', group: 'yandex', value: null, secret: false, source: 'default', default: null, help: 'Каталог Yandex Cloud, в котором работает модель (b1g…)' },
+    { key: 'yandex_model', label: 'Модель', group: 'yandex', value: 'yandexgpt/latest', secret: false, source: 'default', default: 'yandexgpt/latest', help: 'yandexgpt/latest — YandexGPT Pro, yandexgpt-lite/latest — дешевле; или полный URI gpt://…' },
+    { key: 'yandex_max_context', label: 'Лимит контекста', group: 'yandex', value: 32768, secret: false, source: 'default', default: 32768, help: 'Контекст модели в токенах; длиннее — понятная ошибка до запроса. YandexGPT — 32768' },
     { key: 'whisper_language', label: 'Язык записей', group: 'whisper', value: 'ru', secret: false, source: 'env', default: 'ru', help: null },
   ],
   ollama_models: null,
@@ -50,6 +54,7 @@ function usage(days) {
   for (let i = 0; i < days; i++) {
     const date = day(i).slice(0, 10)
     if (i % 3 !== 1) daily.push({ date, provider: 'deepseek', prompt_tokens: 20000 + ((i * 7919) % 50000), completion_tokens: 4000 + ((i * 131) % 6000) })
+    if (i % 5 === 2) daily.push({ date, provider: 'yandex', prompt_tokens: 12000 + ((i * 2749) % 20000), completion_tokens: 2500 })
     if (i % 4 === 0) daily.push({ date, provider: 'ollama', prompt_tokens: 15000 + ((i * 3571) % 30000), completion_tokens: 3000 })
   }
   return {
@@ -59,12 +64,14 @@ function usage(days) {
     by_user: users.slice(0, 3).map((u, i) => ({ user_id: u.id, email: u.email, name: u.name, requests: 60 - i * 20, audio_sec: u.audio_sec, prompt_tokens: 600000 - i * 150000, completion_tokens: 100000 - i * 30000 })),
     by_model: [
       { provider: 'deepseek', model: 'deepseek-flash', requests: 120, prompt_tokens: 1400000, completion_tokens: 260000 },
+      { provider: 'yandex', model: 'yandexgpt/latest', requests: 22, prompt_tokens: 280000, completion_tokens: 40000 },
       { provider: 'ollama', model: 'qwen3.5:4b-instruct-q4_K_M-with-a-long-tag', requests: 64, prompt_tokens: 400000, completion_tokens: 60000 },
     ],
     by_user_model: [
       { user_id: 1, provider: 'deepseek', model: 'deepseek-flash', requests: 40, prompt_tokens: 500000, completion_tokens: 90000 },
       { user_id: 1, provider: 'ollama', model: 'qwen3.5:4b-instruct-q4_K_M-with-a-long-tag', requests: 20, prompt_tokens: 100000, completion_tokens: 10000 },
       { user_id: 2, provider: 'deepseek', model: 'deepseek-flash', requests: 30, prompt_tokens: 400000, completion_tokens: 60000 },
+      { user_id: 2, provider: 'yandex', model: 'yandexgpt/latest', requests: 22, prompt_tokens: 280000, completion_tokens: 40000 },
       { user_id: 3, provider: 'ollama', model: 'qwen3.5:4b-instruct-q4_K_M-with-a-long-tag', requests: 20, prompt_tokens: 300000, completion_tokens: 40000 },
     ],
     daily,
@@ -72,7 +79,7 @@ function usage(days) {
 }
 
 const config = {
-  providers: { deepseek: { available: true, reason: null, model: 'deepseek-flash' }, ollama: { available: true, reason: null, model: 'qwen3.5:4b' } },
+  providers: { deepseek: { available: true, reason: null, model: 'deepseek-flash' }, ollama: { available: true, reason: null, model: 'qwen3.5:4b' }, yandex: { available: false, reason: 'no_folder_id', model: 'yandexgpt/latest' } },
   summary_types: [],
   defaults: { provider: 'auto', summary: true, summary_type: 'auto' },
 }

@@ -292,3 +292,168 @@ def test_resolve_provider_bypasses_cache(monkeypatch):
     summary.resolve_provider("[00:00:00] Привет", "auto", config)
     summary.resolve_provider("[00:00:00] Привет", "auto", config)
     assert len(calls) == 3
+
+
+# --- Yandex AI Studio -------------------------------------------------------------------
+
+YANDEX = summary.LLMConfig(yandex_api_key="AQVN-secret-key", yandex_folder_id="b1gfolder")
+
+
+def mock_yandex(monkeypatch, handler):
+    """The real OpenAI client over a MockTransport: headers and bodies are the real ones."""
+    real = openai.OpenAI
+    monkeypatch.setattr(summary, "OpenAI", lambda **kw: real(
+        **kw, http_client=httpx.Client(transport=httpx.MockTransport(handler))))
+
+
+def yandex_reply(content='{"a": 1}', finish_reason="stop"):
+    return httpx.Response(200, json={
+        "id": "1", "object": "chat.completion", "created": 0,
+        "model": "gpt://b1gfolder/yandexgpt/latest",
+        "choices": [{"index": 0, "finish_reason": finish_reason,
+                     "message": {"role": "assistant", "content": content}}],
+        "usage": {"prompt_tokens": 25, "completion_tokens": 12, "total_tokens": 37}})
+
+
+def test_yandex_request_and_usage(monkeypatch):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return yandex_reply()
+
+    mock_yandex(monkeypatch, handler)
+    raw, usage = summary._chat_yandex(MESSAGES, None, SCHEMA, YANDEX)
+    assert raw == '{"a": 1}'
+    assert usage == summary.Usage("yandex", "yandexgpt/latest", "", 25, 12, "stop")
+    request = requests[0]
+    assert str(request.url) == "https://llm.api.cloud.yandex.net/v1/chat/completions"
+    assert request.headers["authorization"] == "Api-Key AQVN-secret-key"
+    assert request.headers["openai-project"] == "b1gfolder"
+    body = json.loads(request.content)
+    assert body["model"] == "gpt://b1gfolder/yandexgpt/latest"
+    assert body["response_format"] == {"type": "json_schema",
+                                       "json_schema": {"name": "answer", "schema": SCHEMA}}
+    assert body["max_tokens"] == summary.MAX_OUTPUT_TOKENS
+
+
+@pytest.mark.parametrize("model, uri", [
+    ("yandexgpt-lite", "gpt://b1gfolder/yandexgpt-lite/latest"),
+    ("yandexgpt/rc", "gpt://b1gfolder/yandexgpt/rc"),
+    ("gpt://b1gother/aliceai-llm/latest", "gpt://b1gother/aliceai-llm/latest"),
+])
+def test_yandex_model_uri(model, uri):
+    assert summary.yandex_model_uri(YANDEX, model) == uri
+    assert summary._yandex_model_name(uri) == uri.split("/", 3)[3]
+
+
+def test_yandex_falls_back_to_json_mode(monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG, logger="transcriber")
+    formats = []
+
+    def handler(request):
+        formats.append(json.loads(request.content)["response_format"]["type"])
+        if formats[-1] == "json_schema":
+            return httpx.Response(400, json={"error": {"message": "schema is not supported"}})
+        return yandex_reply()
+
+    mock_yandex(monkeypatch, handler)
+    raw = summary._chat("yandex", "summary", None, MESSAGES, None, SCHEMA, YANDEX)
+    assert raw == '{"a": 1}'
+    assert formats == ["json_schema", "json_object"]
+    assert "schema is not supported" not in caplog.text
+
+
+@pytest.mark.parametrize("status, expected", [
+    (401, "ключ API не подошёл"), (403, "роль ai.languageModels.user"), (404, "не найдена")])
+def test_yandex_auth_errors_are_russian_and_keyless(monkeypatch, caplog, status, expected):
+    caplog.set_level(logging.DEBUG, logger="transcriber")
+    mock_yandex(monkeypatch, lambda request: httpx.Response(
+        status, json={"error": {"message": "echo AQVN-secret-key"}}))
+    with pytest.raises(RuntimeError) as info:
+        summary._chat("yandex", "summary", None, MESSAGES, None, SCHEMA, YANDEX)
+    assert expected in str(info.value)
+    assert "AQVN-secret-key" not in str(info.value) + caplog.text
+    assert "b1gfolder" not in str(info.value) + caplog.text
+
+
+@pytest.mark.parametrize("finish_reason, expected", [
+    ("length", "обрезан"), ("content_filter", "фильтр содержимого")])
+def test_yandex_bad_finish_reasons(monkeypatch, finish_reason, expected):
+    mock_yandex(monkeypatch, lambda request: yandex_reply(finish_reason=finish_reason))
+    with pytest.raises(RuntimeError, match=expected):
+        summary._chat_yandex(MESSAGES, None, SCHEMA, YANDEX)
+
+
+def test_yandex_too_long_fails_before_request(monkeypatch):
+    mock_yandex(monkeypatch, lambda request: pytest.fail("no request expected"))
+    long = [{"role": "user", "content": "а" * 100_000}]
+    with pytest.raises(RuntimeError, match="YANDEX_MAX_CONTEXT"):
+        summary._chat_yandex(long, None, SCHEMA, YANDEX)
+
+
+@pytest.mark.parametrize("exc, expected", [
+    (httpx.ReadTimeout, summary.LLMTimeout), (httpx.ConnectError, RuntimeError)])
+def test_yandex_transport_errors(monkeypatch, exc, expected):
+    def handler(request):
+        raise exc("boom", request=request)
+
+    mock_yandex(monkeypatch, handler)
+    monkeypatch.setattr(summary, "YANDEX_MAX_RETRIES", 0)
+    with pytest.raises(expected) as info:
+        summary._chat_yandex(MESSAGES, None, SCHEMA, YANDEX)
+    assert type(info.value) is expected and "Yandex" in str(info.value)
+
+
+def test_yandex_needs_key_and_folder(monkeypatch):
+    monkeypatch.setattr(summary, "_ollama_context_limit", lambda config: 32768)
+    for config, reason, message in [
+        (summary.LLMConfig(), "no_api_key", "YANDEX_API_KEY"),
+        (summary.LLMConfig(yandex_api_key="k"), "no_folder_id", "YANDEX_FOLDER_ID"),
+    ]:
+        status = summary.provider_status(config)["yandex"]
+        assert (status["available"], status["reason"]) == (False, reason)
+        with pytest.raises(RuntimeError, match=message):
+            summary._chat_yandex(MESSAGES, None, SCHEMA, config)
+    assert summary.provider_status(YANDEX)["yandex"] == {
+        "available": True, "reason": None, "model": "yandexgpt/latest"}
+
+
+def test_yandex_not_in_auto(monkeypatch):
+    monkeypatch.setattr(summary, "_ollama_context_limit", lambda config: 10)
+    assert summary.resolve_provider("[00:00:00] Привет", "auto", YANDEX) == "deepseek"
+    assert summary.resolve_provider("[00:00:00] Привет", "yandex", YANDEX) == "yandex"
+
+
+def test_check_yandex(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/v1/models"
+        assert request.headers["openai-project"] == "b1gfolder"
+        return httpx.Response(200, json={"object": "list", "data": [
+            {"id": "gpt://b1gfolder/yandexgpt-lite/latest", "object": "model",
+             "owned_by": "Yandex", "created": 0},
+            {"id": "emb://b1gfolder/text-search-doc/latest", "object": "model",
+             "owned_by": "Yandex", "created": 0}]})
+
+    mock_yandex(monkeypatch, handler)
+    assert "модели yandexgpt/latest нет. Доступны: yandexgpt-lite/latest" in \
+        summary.check_yandex(YANDEX)
+    lite = summary.LLMConfig(yandex_api_key="k", yandex_folder_id="b1gfolder",
+                             yandex_model="yandexgpt-lite")
+    assert summary.check_yandex(lite) == "Ключ работает, модель yandexgpt-lite/latest доступна"
+
+
+def test_summarize_via_yandex_reports_usage(monkeypatch):
+    replies = iter(['{"meeting_type": "meeting"}', json.dumps(make_data("meeting"))])
+    seen = []
+
+    def fake_chat(messages, model, schema, config):
+        seen.append(schema.get("title"))
+        return next(replies), summary.Usage("yandex", "yandexgpt/latest", "", 10, 5, "stop")
+
+    monkeypatch.setattr(summary, "_chat_yandex", fake_chat)
+    usages = []
+    summary.summarize("[00:00:00] Привет", "yandex", config=YANDEX, on_usage=usages.append)
+    assert [(u.provider, u.kind) for u in usages] == [("yandex", "classify"),
+                                                      ("yandex", "summary")]
+    assert len(seen) == 2

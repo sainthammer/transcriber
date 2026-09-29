@@ -26,6 +26,9 @@ DETAILS = {
                    "feedback_to_employee": [], "feedback_to_manager": [], "growth": [],
                    "next_time": []},
     "highlights": {"theses": ["Переход на новую CRM снизит время обработки заявки"]},
+    "freeform": {"sections": [{"title": "Почему пилот, а не внедрение",
+                               "paragraphs": ["Данные клиента нельзя выносить из контура."],
+                               "points": ["Сервер в офисе", "Доступ по VPN"]}]},
 }
 SIDES = {"client": "клиент", "interview": "кандидат", "one_on_one": "сотрудник"}
 
@@ -90,6 +93,8 @@ def test_type_specific_sections():
     assert "## Успехи\n\n- Запустил дашборд" in render_markdown(make_summary("one_on_one"))
     assert ("## Тезисы\n\n- Переход на новую CRM снизит время обработки заявки"
             in render_markdown(make_summary("highlights")))
+    assert ("## Почему пилот, а не внедрение\n\nДанные клиента нельзя выносить из контура."
+            "\n\n- Сервер в офисе\n- Доступ по VPN" in render_markdown(make_summary("freeform")))
 
     md = render_markdown(make_summary("interview"))
     assert md.index("## Предварительная оценка") < md.index("## Участники")
@@ -151,6 +156,14 @@ def test_strip_empty_sections_drops_open_questions_and_discussion():
     md = strip_empty_sections(render_markdown(make_summary("meeting", topics=[])))
     assert "## Открытые вопросы" not in md  # empty in make_data()
     assert "## Ход обсуждения" not in md  # no topics at all — no dangling section either
+
+
+def test_strip_empty_sections_before_discussion_keeps_the_rule():
+    # The `---` before "Ход обсуждения" must not count as content of the empty
+    # "Открытые вопросы" above it, nor disappear together with it.
+    md = strip_empty_sections(render_markdown(make_summary("meeting")))
+    assert "## Открытые вопросы" not in md
+    assert "\n---\n\n## Ход обсуждения" in md
 
 
 def test_strip_empty_sections_drops_empty_subsection_but_keeps_parent():
@@ -271,6 +284,26 @@ def test_sanitize_applied_in_summarize(monkeypatch):
     assert result.details.concerns == []
 
 
+def test_freeform_normalizes_model_markdown():
+    # A small model puts headings, list markers and line breaks into strings; left as is
+    # they'd become stray headings/tables in docx_export, which parses the Markdown.
+    s = make_summary("freeform", details={"sections": [
+        {"title": "## **Итоги:**", "paragraphs": ["Первый абзац.\n\nВторой абзац.\n- вывод\n2) шаг"],
+         "points": ["1. один\n* два", "---", "| таблица"]},
+        {"title": "Пустой", "paragraphs": ["  "], "points": ["-"]},
+        {"title": "Только текст", "paragraphs": ["Абзац про 1,5 млн руб."], "points": []},
+    ]})
+    first, only_text = s.details.sections
+    assert first.title == "Итоги"
+    assert first.paragraphs == ["Первый абзац.", "Второй абзац."]
+    assert first.points == ["вывод", "шаг", "один", "два", "таблица"]
+
+    md = render_markdown(s)
+    assert "## Итоги\n\nПервый абзац.\n\nВторой абзац.\n\n- вывод\n- шаг\n" in md
+    assert "## Только текст\n\nАбзац про 1,5 млн руб.\n\n## Решения" in md
+    assert "Пустой" not in md
+
+
 def test_custom_type_schema_and_render():
     from transcriber.summary_types import Registry
     from transcriber.summary_types.custom import Section, custom_type
@@ -296,7 +329,7 @@ def test_disabled_types_not_offered_to_classifier(monkeypatch):
 
     # Also disable the designated fallback (highlights) to exercise the "first enabled"
     # path rather than the normal fallback-type path.
-    registry = Registry(TYPES, disabled=frozenset({"meeting", "client", "highlights"}))
+    registry = Registry(TYPES, disabled=frozenset({"meeting", "client", "highlights", "freeform"}))
     schemas = []
 
     def fake_chat(messages, model, schema, config):

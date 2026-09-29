@@ -21,7 +21,7 @@ type SectionId = 'users' | 'usage' | 'settings' | 'types'
 const SECTIONS: { id: SectionId; href: string; label: string; hint: string; icon: ComponentType<LucideProps> }[] = [
   { id: 'users', href: '/admin/users', label: 'Пользователи', hint: 'Учётные записи и доступ', icon: UsersIcon },
   { id: 'usage', href: '/admin/usage', label: 'Расход', hint: 'Токены и минуты аудио', icon: ChartColumn },
-  { id: 'settings', href: '/admin/settings', label: 'Модели и ключи', hint: 'DeepSeek, Ollama, распознавание', icon: KeyRound },
+  { id: 'settings', href: '/admin/settings', label: 'Модели и ключи', hint: 'DeepSeek, YandexGPT, Ollama, Whisper', icon: KeyRound },
   { id: 'types', href: '/admin/types', label: 'Типы встреч', hint: 'Промпты и разделы итога', icon: LayoutList },
 ]
 

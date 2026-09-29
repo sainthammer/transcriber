@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import type { CSSProperties } from 'react'
 import { admin } from '../api/client'
@@ -11,6 +11,7 @@ import { audio, compact, num } from './format'
 import { LoadError, Loading, Page, Section } from './Page'
 import { DailyChart } from './DailyChart'
 import { useResource } from './useResource'
+import { isCloud } from '../lib/providers'
 import ui from './admin.module.css'
 import styles from './Usage.module.css'
 
@@ -72,8 +73,10 @@ export function Usage() {
 
 function Report({ data, days }: { data: UsageData; days: number }) {
   const table = useMediaQuery('(min-width: 768px)')
-  const paid = data.by_model.filter((m) => m.provider === 'deepseek')
+  const paid = data.by_model.filter((m) => isCloud(m.provider))
   const free = data.by_model.filter((m) => m.provider === 'ollama')
+  // YandexGPT is optional: its colour, column and legend appear only once it has been used.
+  const yandex = data.by_model.some((m) => m.provider === 'yandex')
   const empty = data.totals.requests === 0 && data.totals.audio_sec === 0
 
   return (
@@ -82,7 +85,8 @@ function Report({ data, days }: { data: UsageData; days: number }) {
         <div className={ui.stat}>
           <dt className={ui.statLabel}>
             <Swatch provider="deepseek" />
-            DeepSeek, платно
+            {yandex && <Swatch provider="yandex" />}
+            {yandex ? 'Облако, платно' : 'DeepSeek, платно'}
           </dt>
           <dd className={ui.statValue}>{compact(sum(paid, tokens))}</dd>
           <dd className={styles.kpiNote}>
@@ -122,6 +126,12 @@ function Report({ data, days }: { data: UsageData; days: number }) {
                   <Swatch provider="deepseek" />
                   DeepSeek
                 </span>
+                {yandex && (
+                  <span>
+                    <Swatch provider="yandex" />
+                    YandexGPT
+                  </span>
+                )}
                 <span>
                   <Swatch provider="ollama" />
                   Локально
@@ -129,11 +139,11 @@ function Report({ data, days }: { data: UsageData; days: number }) {
               </p>
             }
           >
-            <DailyChart to={data.to} days={days} daily={data.daily} />
+            <DailyChart to={data.to} days={days} daily={data.daily} yandex={yandex} />
           </Section>
 
           <Section title="По пользователям">
-            <ByUser data={data} table={table} />
+            <ByUser data={data} table={table} yandex={yandex} />
           </Section>
 
           <Section title="По моделям">
@@ -161,32 +171,29 @@ function perUser(data: UsageData) {
   return data.by_user
     .map((u) => {
       const rows = data.by_user_model.filter((r) => r.user_id === u.user_id)
-      return {
-        ...u,
-        paid: sum(
-          rows.filter((r) => r.provider === 'deepseek'),
-          tokens,
-        ),
-        free: sum(
-          rows.filter((r) => r.provider === 'ollama'),
-          tokens,
-        ),
-      }
+      const by = (p: LlmProvider) => sum(rows.filter((r) => r.provider === p), tokens)
+      const deepseek = by('deepseek')
+      const yandex = by('yandex')
+      return { ...u, deepseek, yandex, paid: deepseek + yandex, free: by('ollama') }
     })
     .sort((a, b) => b.paid - a.paid || b.free - a.free || b.audio_sec - a.audio_sec)
 }
 
-function ShareBar({ paid, free, max }: { paid: number; free: number; max: number }) {
+type UserRow = ReturnType<typeof perUser>[number]
+
+function ShareBar({ row, max }: { row: UserRow; max: number }) {
   if (!max) return null
+  const width = (n: number) => ({ width: `${(100 * n) / max}%` })
   return (
     <span className={styles.share} aria-hidden>
-      <span data-provider="deepseek" style={{ width: `${(100 * paid) / max}%` }} />
-      <span data-provider="ollama" style={{ width: `${(100 * free) / max}%` }} />
+      <span data-provider="deepseek" style={width(row.deepseek)} />
+      {row.yandex > 0 && <span data-provider="yandex" style={width(row.yandex)} />}
+      <span data-provider="ollama" style={width(row.free)} />
     </span>
   )
 }
 
-function ByUser({ data, table }: { data: UsageData; table: boolean }) {
+function ByUser({ data, table, yandex }: { data: UsageData; table: boolean; yandex: boolean }) {
   const rows = useMemo(() => perUser(data), [data])
   const max = Math.max(0, ...rows.map((r) => r.paid + r.free))
   if (rows.length === 0) return <p className={ui.empty}>Никто ничего не загружал</p>
@@ -201,9 +208,25 @@ function ByUser({ data, table }: { data: UsageData; table: boolean }) {
                 <span className={ui.linkTitle}>
                   <span>{r.name || r.email}</span>
                 </span>
-                <ShareBar paid={r.paid} free={r.free} max={max} />
+                <ShareBar row={r} max={max} />
                 <span className={`${ui.linkMeta} ${styles.meta} tabular`}>
-                  <span>DeepSeek {compact(r.paid)}</span> · <span>локально {compact(r.free)}</span> ·{' '}
+                  {/* Only what the user actually spent: three zeros in a row read as noise. */}
+                  {(
+                    [
+                      ['DeepSeek', r.deepseek],
+                      ['YandexGPT', r.yandex],
+                      ['локально', r.free],
+                    ] as const
+                  )
+                    .filter(([, n]) => n > 0)
+                    .map(([label, n]) => (
+                      <Fragment key={label}>
+                        {/* The dot stays with its item, so a wrapped line never starts with it. */}
+                        <span>
+                          {label} {compact(n)} ·
+                        </span>{' '}
+                      </Fragment>
+                    ))}
                   <span>{audio(r.audio_sec)}</span>
                 </span>
               </span>
@@ -227,6 +250,11 @@ function ByUser({ data, table }: { data: UsageData; table: boolean }) {
             <th scope="col" className={ui.num}>
               DeepSeek
             </th>
+            {yandex && (
+              <th scope="col" className={ui.num}>
+                YandexGPT
+              </th>
+            )}
             <th scope="col" className={ui.num}>
               Локально
             </th>
@@ -242,10 +270,11 @@ function ByUser({ data, table }: { data: UsageData; table: boolean }) {
                 <Link href={userPath(r.user_id)} className={ui.rowLink}>
                   {r.name || r.email}
                 </Link>
-                <ShareBar paid={r.paid} free={r.free} max={max} />
+                <ShareBar row={r} max={max} />
               </td>
               <td className={ui.num}>{num(r.requests)}</td>
-              <td className={`${ui.num} ${styles.paid}`}>{r.paid ? compact(r.paid) : '—'}</td>
+              <td className={`${ui.num} ${styles.paid}`}>{r.deepseek ? compact(r.deepseek) : '—'}</td>
+              {yandex && <td className={`${ui.num} ${styles.paid}`}>{r.yandex ? compact(r.yandex) : '—'}</td>}
               <td className={`${ui.num} ${ui.muted}`}>{r.free ? compact(r.free) : '—'}</td>
               <td className={`${ui.num} ${ui.muted}`}>{audio(r.audio_sec)}</td>
             </tr>
@@ -260,7 +289,7 @@ function ByUser({ data, table }: { data: UsageData; table: boolean }) {
 
 function ByModel({ data, table }: { data: UsageData; table: boolean }) {
   const rows = [...data.by_model].sort(
-    (a, b) => Number(b.provider === 'deepseek') - Number(a.provider === 'deepseek') || tokens(b) - tokens(a),
+    (a, b) => Number(isCloud(b.provider)) - Number(isCloud(a.provider)) || tokens(b) - tokens(a),
   )
   if (rows.length === 0) return <p className={ui.empty}>К моделям не обращались</p>
 
@@ -317,7 +346,7 @@ function ByModel({ data, table }: { data: UsageData; table: boolean }) {
               <td className={ui.num}>{num(m.requests)}</td>
               <td className={`${ui.num} ${ui.muted}`}>{num(m.prompt_tokens)}</td>
               <td className={`${ui.num} ${ui.muted}`}>{num(m.completion_tokens)}</td>
-              <td className={`${ui.num} ${m.provider === 'deepseek' ? styles.paid : ''}`}>{num(tokens(m))}</td>
+              <td className={`${ui.num} ${isCloud(m.provider) ? styles.paid : ''}`}>{num(tokens(m))}</td>
             </tr>
           ))}
         </tbody>
@@ -327,9 +356,9 @@ function ByModel({ data, table }: { data: UsageData; table: boolean }) {
 }
 
 function ProviderBadge({ provider }: { provider: LlmProvider }) {
-  return provider === 'deepseek' ? (
+  return isCloud(provider) ? (
     <span className={ui.badge} data-tone="accent">
-      DeepSeek · платно
+      {provider === 'yandex' ? 'YandexGPT' : 'DeepSeek'} · платно
     </span>
   ) : (
     <span className={ui.badge}>Ollama · бесплатно</span>
@@ -341,7 +370,7 @@ function ProviderBadge({ provider }: { provider: LlmProvider }) {
 function Matrix({ data }: { data: UsageData }) {
   const users = useMemo(() => perUser(data), [data])
   const models = [...data.by_model].sort(
-    (a, b) => Number(b.provider === 'deepseek') - Number(a.provider === 'deepseek') || tokens(b) - tokens(a),
+    (a, b) => Number(isCloud(b.provider)) - Number(isCloud(a.provider)) || tokens(b) - tokens(a),
   )
   const cell = (userId: number, provider: string, model: string) => {
     const r = data.by_user_model.find((x) => x.user_id === userId && x.provider === provider && x.model === model)

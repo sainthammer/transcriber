@@ -51,3 +51,55 @@ def test_underscores_inside_words_are_not_italic():
     item = doc.paragraphs[-1]
     assert item.text == "поле snake_case_name и курсив"
     assert [r.italic for r in item.runs] == [None, True]
+
+
+def test_freeform_sections_export():
+    """Free-form sections (model-chosen titles, paragraphs, points) survive the Word
+    download path: timestamps off, empty sections stripped."""
+    from transcriber.summary_types import strip_empty_sections
+
+    s = make_summary("freeform", details={"sections": [
+        {"title": "Зачем писать постмортем",
+         "paragraphs": ["Выводы по инцидентам забываются.", "Документ пишется для дежурных."],
+         "points": []},
+        {"title": "Структура", "paragraphs": ["Пять частей."],
+         "points": ["Хронология", "Причины"]},
+        {"title": "Правила", "paragraphs": [], "points": ["Владелец и срок у каждой задачи"]},
+        {"title": "Код", "paragraphs": ["Модуль __init__.py и snake_case_name"], "points": []},
+    ]}, decisions=[], open_questions=[])
+    md = strip_empty_sections(render_markdown(s, duration="~35 мин", timestamps=False))
+    doc = as_document(md)
+    paragraphs = [(p.style.name, p.text) for p in doc.paragraphs if p.text]
+
+    def body(title):
+        start = paragraphs.index(("Heading 2", title)) + 1
+        end = next(i for i in range(start, len(paragraphs)) if paragraphs[i][0] == "Heading 2")
+        return paragraphs[start:end]
+
+    assert body("Зачем писать постмортем") == [("Normal", "Выводы по инцидентам забываются."),
+                                               ("Normal", "Документ пишется для дежурных.")]
+    assert body("Структура") == [("Normal", "Пять частей."), ("List Bullet", "Хронология"),
+                                 ("List Bullet", "Причины")]
+    assert body("Правила") == [("List Bullet", "Владелец и срок у каждой задачи")]
+    assert body("Код") == [("Normal", "Модуль __init__.py и snake_case_name")]
+
+    headings = [text for style, text in paragraphs if style == "Heading 2"]
+    # Sections sit where the type's details go; empty common sections are stripped.
+    assert headings == ["Кратко", "Участники", "Ключевые цифры", "Зачем писать постмортем",
+                        "Структура", "Правила", "Код", "Задачи", "Ход обсуждения"]
+
+
+def test_print_layout():
+    """Rows never split across pages, the header row repeats, the footer numbers pages."""
+    from docx.oxml.ns import qn
+
+    doc = as_document(render_markdown(make_summary("client"), duration="~35 мин"))
+    for table in doc.tables:
+        rows = [row._tr.trPr for row in table.rows]
+        assert all(pr is not None and pr.find(qn("w:cantSplit")) is not None for pr in rows)
+        assert rows[0].find(qn("w:tblHeader")) is not None
+
+    footer = doc.sections[0].footer.paragraphs[0]
+    assert footer.text.startswith("Пилот ИИ-аналитики\t")
+    fields = [t.text for t in footer._p.iter(qn("w:instrText"))]
+    assert fields == ["PAGE", "NUMPAGES"]

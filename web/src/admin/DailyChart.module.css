@@ -106,11 +106,15 @@
   border-radius: 1px 1px 0 0;
 }
 
-.paid {
+.stack > span[data-provider="deepseek"] {
   background: var(--paid);
 }
 
-.free {
+.stack > span[data-provider="yandex"] {
+  background: var(--paid-alt);
+}
+
+.stack > span[data-provider="ollama"] {
   background: var(--free);
 }
 
@@ -186,6 +190,10 @@
 
 .tooltip i[data-provider="deepseek"] {
   background: var(--paid);
+}
+
+.tooltip i[data-provider="yandex"] {
+  background: var(--paid-alt);
 }
 
 .tooltip i[data-provider="ollama"] {

@@ -1,6 +1,6 @@
 import { Upload } from 'lucide-react'
 import type { Config } from '../api/types'
-import { providerReason } from '../lib/providers'
+import { offersYandex, providerReason } from '../lib/providers'
 import { useAuth } from '../state/authContext'
 import { Button } from './ui/Button'
 import styles from './Welcome.module.css'
@@ -15,6 +15,7 @@ interface Props {
 export function Welcome({ config, onPick, variant }: Props) {
   const first = variant === 'first'
   const { isAdmin } = useAuth()
+  const yandex = config && offersYandex(config) ? config.providers.yandex : null
   return (
     <div className={styles.wrap} data-variant={variant}>
       <div className={styles.zone}>
@@ -71,10 +72,19 @@ export function Welcome({ config, onPick, variant }: Props) {
               }
               loading={!config}
             />
+            {yandex && (
+              <ProviderRow
+                title="Итог через YandexGPT"
+                okText="YandexGPT — готов"
+                reason={providerReason('yandex', yandex, isAdmin)}
+                loading={false}
+              />
+            )}
           </ul>
           <p className={styles.privacy}>
-            Аудио и расшифровка остаются в закрытом контуре. Если итог делает
-            DeepSeek, текст расшифровки отправляется на серверы DeepSeek.
+            {yandex
+              ? 'Аудио и расшифровка остаются в закрытом контуре. Если итог делает DeepSeek или YandexGPT, текст расшифровки отправляется на серверы этой модели.'
+              : 'Аудио и расшифровка остаются в закрытом контуре. Если итог делает DeepSeek, текст расшифровки отправляется на серверы DeepSeek.'}
           </p>
         </section>
       </div>

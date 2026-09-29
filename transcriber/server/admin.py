@@ -61,7 +61,7 @@ def put_settings(request: Request, changes: dict = Body(...),
 
 
 class TestRequest(BaseModel):
-    provider: str = Field(description="`deepseek` или `ollama`")
+    provider: str = Field(description="`deepseek`, `ollama` или `yandex`")
 
 
 @router.post("/settings/test", tags=[SETTINGS], summary="Проверить провайдера",
@@ -72,6 +72,8 @@ def test_provider(body: TestRequest, request: Request):
     try:
         if body.provider == "deepseek":
             return {"ok": True, "message": summary_mod.check_deepseek(config)}
+        if body.provider == "yandex":
+            return {"ok": True, "message": summary_mod.check_yandex(config)}
         if body.provider == "ollama":
             models = [m["name"] for m in summary_mod.ollama_models(config)]
             if config.ollama_model not in models:
@@ -80,7 +82,7 @@ def test_provider(body: TestRequest, request: Request):
             return {"ok": True, "message": f"Ollama работает, модель {config.ollama_model} есть"}
     except Exception as e:  # noqa: BLE001 — shown to the admin as is
         return {"ok": False, "message": str(e) or type(e).__name__}
-    raise HTTPException(422, "provider: deepseek или ollama")
+    raise HTTPException(422, "provider: deepseek, ollama или yandex")
 
 
 # --- summary types ---

@@ -134,7 +134,7 @@ class UsageRecord(Base):
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
     job_id: Mapped[str | None] = mapped_column(String(40))  # no FK: usage outlives the job
     kind: Mapped[str] = mapped_column(String(16))  # "transcribe" | "classify" | "summary"
-    provider: Mapped[str] = mapped_column(String(16))  # "whisper" | "deepseek" | "ollama"
+    provider: Mapped[str] = mapped_column(String(16))  # whisper | deepseek | ollama | yandex
     model: Mapped[str] = mapped_column(String(100))
     prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
     completion_tokens: Mapped[int] = mapped_column(Integer, default=0)

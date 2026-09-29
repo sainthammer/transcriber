@@ -3,6 +3,7 @@ import { Check, Minus, X } from 'lucide-react'
 import type { JobDetail, StageInfo, StageName } from '../api/types'
 import { clock, duration, plural } from '../lib/format'
 import { useTicker } from '../lib/hooks'
+import { providerName } from '../lib/providers'
 import { useEta } from '../state/useEta'
 import { Button } from '../components/ui/Button'
 import { ProgressRing } from '../components/ui/ProgressRing'
@@ -10,6 +11,7 @@ import styles from './JobMain.module.css'
 
 const PROVIDER_PLAN = {
   deepseek: 'Через DeepSeek',
+  yandex: 'Через YandexGPT',
   ollama: 'Локальной моделью',
   auto: 'Модель выберем по размеру расшифровки',
 } as const
@@ -77,7 +79,7 @@ export function Processing({ job, onCancel }: Props) {
         job.stages.summarizing.status === 'skipped'
           ? 'Выключено'
           : job.stages.summarizing.status === 'running'
-            ? `${job.provider_used === 'ollama' ? 'Локальная модель' : 'DeepSeek'} · идёт ${elapsed(job.stages.summarizing, now)}`
+            ? `${providerName(job.provider_used) ?? 'Модель'} · идёт ${elapsed(job.stages.summarizing, now)}`
             : PROVIDER_PLAN[job.options.provider],
     },
   ]
